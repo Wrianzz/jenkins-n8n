@@ -6,8 +6,8 @@ pipeline {
   }
 
   environment {
-    DEV_CONTAINER  = 'n8n-dev'
-    PROD_CONTAINER = 'n8n-prod'
+    DEV_CONTAINER  = 'n8n-dev-n8n-dev-1'
+    PROD_CONTAINER = 'n8n-prod-n8n-prod-1'
   }
 
   stages {
