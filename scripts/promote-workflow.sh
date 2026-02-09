@@ -53,9 +53,9 @@ PROD_PROJECT_ID="$(get_prod_project_id)"
 echo "[3.6] Using PROD_PROJECT_ID=${PROD_PROJECT_ID}"
 
 echo "[4] Import credentials into PROD (attach to project)"
-docker exec "$PROD_CONTAINER" n8n import:credentials --separate --input "$CREDS_DIR" --projectId "$PROD_PROJECT_ID"
+docker exec "$PROD_CONTAINER" n8n import:credentials --separate --input "$CREDS_DIR" --userId "$PROD_PROJECT_ID"
 
 echo "[5] Import workflow into PROD (attach to project)"
-docker exec "$PROD_CONTAINER" n8n import:workflow --input "$WF" --projectId "$PROD_PROJECT_ID"
+docker exec "$PROD_CONTAINER" n8n import:workflow --input "$WF" --userId "$PROD_PROJECT_ID"
 
 echo "[6] Done"
