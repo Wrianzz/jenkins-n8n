@@ -1,0 +1,28 @@
+pipeline {
+  agent any
+
+  parameters {
+    string(name: 'WORKFLOW_ID', defaultValue: '', description: 'Workflow ID from n8n-dev')
+  }
+
+  environment {
+    DEV_CONTAINER  = 'n8n-dev'
+    PROD_CONTAINER = 'n8n-prod'
+  }
+
+  stages {
+    stage('Checkout') {
+      steps { checkout scm }
+    }
+
+    stage('Promote') {
+      steps {
+        sh '''
+          set -e
+          chmod +x scripts/promote-workflow.sh
+          scripts/promote-workflow.sh "${WORKFLOW_ID}"
+        '''
+      }
+    }
+  }
+}
