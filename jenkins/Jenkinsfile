@@ -10,11 +10,6 @@ pipeline {
     PROD_CONTAINER = 'n8n-prod-n8n-prod-1'
   }
 
-  stages {
-    stage('Checkout') {
-      steps { checkout scm }
-    }
-
     stage('Promote') {
       steps {
         sh '''
