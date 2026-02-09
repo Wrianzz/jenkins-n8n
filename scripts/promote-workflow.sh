@@ -13,7 +13,7 @@ WF="${DIR}/workflow.json"
 CREDS_DIR="${DIR}/creds"
 
 echo "[0] Prepare dir: ${DIR}"
-docker exec "$DEV_CONTAINER" sh -lc "mkdir -p '${CREDS_DIR}'"
+docker exec -u root "$DEV_CONTAINER" sh -lc "mkdir -p '${CREDS_DIR}' && chown -R 1000:1000 '${DIR}'"
 
 echo "[1] Export workflow from DEV"
 # export:workflow flags resmi di docs
