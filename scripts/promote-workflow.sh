@@ -14,19 +14,24 @@ WF="${DIR}/workflow.json"
 CREDS_DIR="${DIR}/creds"
 
 get_prod_project_id() {
-  # Ambil 1 project paling awal (karena prod kamu cuma 1 project)
-  # -tA: tuples only + unaligned (hasilnya cuma nilai)
+  # Prod kamu cuma 1 project → ambil yang paling awal
   local pid
   pid="$(docker exec "$PROD_PG_CONTAINER" psql -U n8n -d n8n -tA -c \
     "select id from project order by \"createdAt\" asc limit 1;" \
     | tr -d '\r' | xargs || true)"
-
-  if [[ -z "$pid" ]]; then
-    echo "[ERR] Could not determine PROD projectId from database (table project empty / cannot connect)." >&2
-    exit 1
-  fi
-
+  [[ -n "$pid" ]] || { echo "[ERR] Cannot determine PROD projectId"; exit 1; }
   echo "$pid"
+}
+
+share_credential_to_project() {
+  local cid="$1"
+  local pid="$2"
+
+  # Upsert mapping credential → project (biar credential bisa diakses dari workflow/editor)
+  docker exec "$PROD_PG_CONTAINER" psql -U n8n -d n8n -tA -c \
+    "insert into shared_credentials(\"credentialsId\",\"projectId\",\"role\")
+     values ('$cid','$pid','credential:owner')
+     on conflict do nothing;" >/dev/null
 }
 
 echo "[0] Prepare dir: ${DIR}"
@@ -52,10 +57,17 @@ echo "[3.5] Determine PROD projectId (auto)"
 PROD_PROJECT_ID="$(get_prod_project_id)"
 echo "[3.6] Using PROD_PROJECT_ID=${PROD_PROJECT_ID}"
 
-echo "[4] Import credentials into PROD (attach to project)"
-docker exec "$PROD_CONTAINER" n8n import:credentials --separate --input "$CREDS_DIR" --userId "$PROD_PROJECT_ID"
+echo "[4] Import credentials into PROD"
+docker exec "$PROD_CONTAINER" n8n import:credentials --separate --input "$CREDS_DIR" --projectId "$PROD_PROJECT_ID" || true
 
-echo "[5] Import workflow into PROD (attach to project)"
-docker exec "$PROD_CONTAINER" n8n import:workflow --input "$WF" --userId "$PROD_PROJECT_ID"
+echo "[4.1] Ensure shared_credentials mapping exists (DB upsert)"
+# Untuk setiap credentialId yang dipakai workflow, pastikan ada row di shared_credentials
+while read -r CID; do
+  [[ -z "${CID:-}" ]] && continue
+  share_credential_to_project "$CID" "$PROD_PROJECT_ID"
+done < "$TMP_IDS"
+
+echo "[5] Import workflow into PROD"
+docker exec "$PROD_CONTAINER" n8n import:workflow --input "$WF" --projectId "$PROD_PROJECT_ID"
 
 echo "[6] Done"
