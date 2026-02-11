@@ -1,0 +1,39 @@
+pipeline {
+  agent any
+  parameters {
+    string(name: 'WORKFLOW_ID', defaultValue: '', description: 'Workflow ID from n8n-dev')
+  }
+  environment {
+    DEV_CONTAINER = 'n8n-dev-n8n-dev-1'
+  }
+  stages {
+    stage('Checkout dev branch') {
+      steps {
+        checkout([$class: 'GitSCM',
+          branches: [[name: '*/dev']],
+          userRemoteConfigs: [[url: 'git@github.com:Wrianzz/jenkins-n8n.git', credentialsId: 'jenkins-git-ssh']]
+        ])
+      }
+    }
+    stage('Export to repo') {
+      steps {
+        sh '''
+          chmod +x scripts/export_to_git.sh
+          scripts/export_to_git.sh "$WORKFLOW_ID"
+        '''
+      }
+    }
+    stage('Commit & push') {
+      steps {
+        sshagent(credentials: ['jenkins-git-ssh']) {
+          sh '''
+            git status
+            git add workflows/*.json
+            git commit -m "export workflow ${WORKFLOW_ID} from dev" || echo "No changes"
+            git push origin dev
+          '''
+        }
+      }
+    }
+  }
+}

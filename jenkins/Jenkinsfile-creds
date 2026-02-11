@@ -15,8 +15,8 @@ pipeline {
       steps {
         sh '''
           set -e
-          chmod +x scripts/promote-workflow.sh
-          scripts/promote-workflow.sh "${WORKFLOW_ID}"
+          chmod +x scripts/promote-creds.sh
+          scripts/promote-workflow.sh "${CRED_IDS}"
         '''
       }
     }

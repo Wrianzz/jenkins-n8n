@@ -1,0 +1,24 @@
+pipeline {
+  agent any
+  parameters {
+    string(name: 'WORKFLOW_ID', defaultValue: '', description: 'Workflow ID, file must exist as workflows/<ID>.json')
+  }
+  environment {
+    PROD_CONTAINER = 'n8n-prod-n8n-prod-1'
+    PROD_PG_CONTAINER = 'n8n-prod-postgres-prod-1'
+  }
+  stages {
+    stage('Checkout main') {
+      steps { checkout scm }
+    }
+    stage('Deploy one workflow') {
+      steps {
+        sh '''
+          set -e
+          chmod +x scripts/deploy-one-from-git.sh
+          scripts/deploy-one-from-git.sh "$WORKFLOW_ID"
+        '''
+      }
+    }
+  }
+}
