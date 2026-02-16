@@ -21,6 +21,12 @@ pipeline {
       }
     }
 
+    stage('Debug workspace') {
+      steps {
+        sh 'pwd; ls -la; find . -maxdepth 3 -type f | sed -n "1,200p"'
+      }
+    }
+
     stage('Export to repo') {
       steps {
         sh '''
