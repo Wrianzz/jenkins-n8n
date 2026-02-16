@@ -31,8 +31,8 @@ pipeline {
       steps {
         sh '''
           set -e
-          chmod +x ../scripts/export_to_git.sh
-          ../scripts/export_to_git.sh "$WORKFLOW_ID"
+          chmod +x scripts/export-to-git.sh
+          scripts/export-to-git.sh "$WORKFLOW_ID"
         '''
       }
     }
