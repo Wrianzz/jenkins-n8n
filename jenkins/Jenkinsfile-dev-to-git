@@ -9,6 +9,18 @@ pipeline {
     GIT_CRED_ID = 'jenkins-n8n'
   }
   stages {
+    stage('Checkout dev branch') {
+      steps {
+        checkout([$class: 'GitSCM',
+          branches: [[name: '*/main']],
+          userRemoteConfigs: [[
+            url: "${REPO_HTTPS}",
+            credentialsId: "${GIT_CRED_ID}"
+          ]]
+        ])
+      }
+    }
+
     stage('Export to repo') {
       steps {
         sh '''
