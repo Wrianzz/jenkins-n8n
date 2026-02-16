@@ -1,0 +1,83 @@
+[
+  {
+    "active": false,
+    "activeVersionId": null,
+    "connections": {
+      "When clicking ‘Execute workflow’": {
+        "main": [
+          [
+            {
+              "index": 0,
+              "node": "Create a message",
+              "type": "main"
+            }
+          ]
+        ]
+      }
+    },
+    "createdAt": "2026-02-16T03:54:35.671Z",
+    "description": null,
+    "id": "8I74ZmV0SBYsqrbYxagnn",
+    "isArchived": false,
+    "meta": null,
+    "name": "cihuyy",
+    "nodes": [
+      {
+        "id": "c9f9c769-6d77-4418-85cf-ac637f7f6591",
+        "name": "When clicking ‘Execute workflow’",
+        "parameters": {},
+        "position": [
+          0,
+          0
+        ],
+        "type": "n8n-nodes-base.manualTrigger",
+        "typeVersion": 1
+      },
+      {
+        "id": "4f06e7bb-0766-4928-9adb-adccbdaf8c21",
+        "name": "Create a message",
+        "parameters": {
+          "operation": "sendAndWait",
+          "options": {}
+        },
+        "position": [
+          208,
+          0
+        ],
+        "type": "n8n-nodes-base.googleChat",
+        "typeVersion": 1,
+        "webhookId": "23991be7-76d3-4be9-9a68-5662bea59121"
+      }
+    ],
+    "pinData": {},
+    "settings": {
+      "availableInMCP": false,
+      "executionOrder": "v1"
+    },
+    "shared": [
+      {
+        "createdAt": "2026-02-16T03:54:35.671Z",
+        "project": {
+          "createdAt": "2026-02-05T03:42:57.879Z",
+          "creatorId": "a8a031e5-324d-4510-8061-83d160c23002",
+          "description": null,
+          "icon": null,
+          "id": "0yndx2RxYhns8Dri",
+          "name": "Rex Lapis <rizki.rama1314@gmail.com>",
+          "type": "personal",
+          "updatedAt": "2026-02-05T03:48:24.838Z"
+        },
+        "projectId": "0yndx2RxYhns8Dri",
+        "role": "workflow:owner",
+        "updatedAt": "2026-02-16T03:54:35.671Z",
+        "workflowId": "8I74ZmV0SBYsqrbYxagnn"
+      }
+    ],
+    "staticData": null,
+    "tags": [],
+    "triggerCount": 0,
+    "updatedAt": "2026-02-16T03:54:48.133Z",
+    "versionCounter": 2,
+    "versionId": "7dc3af19-cbfc-4455-b7b0-0ce7b80734ec"
+  }
+]
