@@ -5,32 +5,53 @@ pipeline {
   }
   environment {
     DEV_CONTAINER = 'n8n-dev-n8n-dev-1'
+    REPO_HTTPS = 'https://github.com/Wrianzz/jenkins-n8n.git'
+    GIT_CRED_ID = 'jenkins-n8n'
   }
   stages {
     stage('Checkout dev branch') {
       steps {
         checkout([$class: 'GitSCM',
           branches: [[name: '*/dev']],
-          userRemoteConfigs: [[url: 'git@github.com:Wrianzz/jenkins-n8n.git', credentialsId: 'jenkins-git-ssh']]
+          userRemoteConfigs: [[
+            url: "${REPO_HTTPS}",
+            credentialsId: "${GIT_CRED_ID}"
+          ]]
         ])
       }
     }
+
     stage('Export to repo') {
       steps {
         sh '''
+          set -e
           chmod +x scripts/export_to_git.sh
           scripts/export_to_git.sh "$WORKFLOW_ID"
         '''
       }
     }
+
     stage('Commit & push') {
       steps {
-        sshagent(credentials: ['jenkins-git-ssh']) {
+        withCredentials([usernamePassword(
+          credentialsId: "${GIT_CRED_ID}",
+          usernameVariable: 'GH_USER',
+          passwordVariable: 'GH_PAT'
+        )]) {
           sh '''
+            set -e
+            set +x
+
             git status
+            git config user.email "jenkins@local"
+            git config user.name  "jenkins"
+
             git add workflows/*.json
             git commit -m "export workflow ${WORKFLOW_ID} from dev" || echo "No changes"
-            git push origin dev
+
+            # pakai PAT via HTTPS untuk push
+            git remote set-url origin "https://${GH_USER}:${GH_PAT}@github.com/Wrianzz/jenkins-n8n.git"
+            git push origin HEAD:dev
           '''
         }
       }
