@@ -57,7 +57,7 @@ pipeline {
 
             # pakai PAT via HTTPS untuk push
             git remote set-url origin "https://${GH_USER}:${GH_PAT}@github.com/Wrianzz/jenkins-n8n.git"
-            git push origin HEAD:dev
+            git push origin HEAD:main
           '''
         }
       }
