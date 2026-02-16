@@ -16,7 +16,7 @@ pipeline {
         sh '''
           set -e
           chmod +x scripts/deploy-from-git.sh
-          scripts/deploy-one-from-git.sh "$WORKFLOW_ID"
+          scripts/deploy-from-git.sh "$WORKFLOW_ID"
         '''
       }
     }
