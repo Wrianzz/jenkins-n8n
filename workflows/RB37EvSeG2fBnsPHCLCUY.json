@@ -1,0 +1,79 @@
+[
+  {
+    "active": false,
+    "activeVersionId": null,
+    "connections": {
+      "When clicking ‘Execute workflow’": {
+        "main": [
+          [
+            {
+              "index": 0,
+              "node": "No Operation, do nothing",
+              "type": "main"
+            }
+          ]
+        ]
+      }
+    },
+    "createdAt": "2026-02-20T01:44:30.667Z",
+    "description": null,
+    "id": "RB37EvSeG2fBnsPHCLCUY",
+    "isArchived": false,
+    "meta": null,
+    "name": "Test",
+    "nodes": [
+      {
+        "id": "f9ef93c1-3d96-4b64-87f0-55ffc9837b78",
+        "name": "When clicking ‘Execute workflow’",
+        "parameters": {},
+        "position": [
+          0,
+          0
+        ],
+        "type": "n8n-nodes-base.manualTrigger",
+        "typeVersion": 1
+      },
+      {
+        "id": "a76a3dd6-83e1-48ae-b896-55ebdc831bcf",
+        "name": "No Operation, do nothing",
+        "parameters": {},
+        "position": [
+          208,
+          0
+        ],
+        "type": "n8n-nodes-base.noOp",
+        "typeVersion": 1
+      }
+    ],
+    "pinData": {},
+    "settings": {
+      "availableInMCP": false,
+      "executionOrder": "v1"
+    },
+    "shared": [
+      {
+        "createdAt": "2026-02-20T01:44:30.667Z",
+        "project": {
+          "createdAt": "2026-02-05T03:42:57.879Z",
+          "creatorId": "a8a031e5-324d-4510-8061-83d160c23002",
+          "description": null,
+          "icon": null,
+          "id": "0yndx2RxYhns8Dri",
+          "name": "Rex Lapis <rizki.rama1314@gmail.com>",
+          "type": "personal",
+          "updatedAt": "2026-02-05T03:48:24.838Z"
+        },
+        "projectId": "0yndx2RxYhns8Dri",
+        "role": "workflow:owner",
+        "updatedAt": "2026-02-20T01:44:30.667Z",
+        "workflowId": "RB37EvSeG2fBnsPHCLCUY"
+      }
+    ],
+    "staticData": null,
+    "tags": [],
+    "triggerCount": 0,
+    "updatedAt": "2026-02-20T01:44:30.667Z",
+    "versionCounter": 1,
+    "versionId": "0d39f0d4-8ad1-4aa6-b224-aa0c599e816d"
+  }
+]
