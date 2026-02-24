@@ -2,7 +2,7 @@ pipeline {
   agent any
 
   parameters {
-    string(name: 'WORKFLOW_ID', defaultValue: '', description: 'Workflow ID from n8n-dev')
+    string(name: 'CRED_IDS', defaultValue: '', description: 'Workflow ID from n8n-dev')
   }
 
   environment {
