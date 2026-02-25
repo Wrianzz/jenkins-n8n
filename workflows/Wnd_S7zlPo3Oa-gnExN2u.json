@@ -5,7 +5,13 @@
     "connections": {
       "When clicking ‘Execute workflow’": {
         "main": [
-          []
+          [
+            {
+              "index": 0,
+              "node": "Get collection",
+              "type": "main"
+            }
+          ]
         ]
       }
     },
@@ -35,8 +41,8 @@
           "requestOptions": {}
         },
         "position": [
-          144,
-          144
+          192,
+          0
         ],
         "type": "n8n-nodes-base.adalo",
         "typeVersion": 1
@@ -69,8 +75,8 @@
     "staticData": null,
     "tags": [],
     "triggerCount": 0,
-    "updatedAt": "2026-02-25T02:08:51.778Z",
-    "versionCounter": 3,
-    "versionId": "666092f4-7de0-4d55-aac3-576dffcf7e20"
+    "updatedAt": "2026-02-25T02:52:20.657Z",
+    "versionCounter": 4,
+    "versionId": "bc0af1d5-09a6-494d-bc5b-0324685eaf2f"
   }
 ]
