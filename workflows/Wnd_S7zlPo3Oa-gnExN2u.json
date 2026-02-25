@@ -5,13 +5,7 @@
     "connections": {
       "When clicking ‘Execute workflow’": {
         "main": [
-          [
-            {
-              "index": 0,
-              "node": "No Operation, do nothing",
-              "type": "main"
-            }
-          ]
+          []
         ]
       }
     },
@@ -34,14 +28,17 @@
         "typeVersion": 1
       },
       {
-        "id": "17d1e206-2aae-43ae-a8b1-834adf9c3d09",
-        "name": "No Operation, do nothing",
-        "parameters": {},
+        "id": "c5ad240f-6e4a-45a7-97c1-5cb3d559bed9",
+        "name": "Get collection",
+        "parameters": {
+          "operation": "get",
+          "requestOptions": {}
+        },
         "position": [
-          208,
-          0
+          144,
+          144
         ],
-        "type": "n8n-nodes-base.noOp",
+        "type": "n8n-nodes-base.adalo",
         "typeVersion": 1
       }
     ],
@@ -72,8 +69,8 @@
     "staticData": null,
     "tags": [],
     "triggerCount": 0,
-    "updatedAt": "2026-02-25T01:17:48.632Z",
-    "versionCounter": 1,
-    "versionId": "b38f0b54-608d-4a82-b2e5-3feb21543551"
+    "updatedAt": "2026-02-25T02:08:51.778Z",
+    "versionCounter": 3,
+    "versionId": "666092f4-7de0-4d55-aac3-576dffcf7e20"
   }
 ]
