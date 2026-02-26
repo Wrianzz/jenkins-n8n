@@ -8,6 +8,13 @@ pipeline {
     PROD_PG_CONTAINER = 'n8n-prod-postgres-prod-1'
   }
   stages {
+    stage('Approval') {
+      steps {
+        input message: "Apakah kamu yakin ingin mendeploy workflow dengan ID: ${params.WORKFLOW_ID}?", 
+              ok: 'Deploy Sekarang',
+              submitter: 'morax'
+      }
+    }
     stage('Checkout main') {
       steps { checkout scm }
     }
