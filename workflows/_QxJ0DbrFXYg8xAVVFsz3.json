@@ -116,13 +116,7 @@
       },
       "Hash ITop Ticket": {
         "main": [
-          [
-            {
-              "index": 0,
-              "node": "Checkpoint",
-              "type": "main"
-            }
-          ]
+          []
         ]
       },
       "Merge": {
@@ -544,27 +538,6 @@
         "typeVersion": 1
       },
       {
-        "credentials": {
-          "postgres": {
-            "id": "WLvqHNDORXGk2KJ2",
-            "name": "Charlie"
-          }
-        },
-        "id": "e2e80f51-ff23-4801-ab7d-69a81bab4f6d",
-        "name": "Checkpoint",
-        "parameters": {
-          "operation": "executeQuery",
-          "options": {},
-          "query": "INSERT INTO dojo_itop_sync (finding_id, itop_ticket_ref, dd_hash, itop_hash)\nVALUES ('{{ $items('Already Sent?', 0, 0)[$itemIndex].json.id }}', '{{ $json.itop_ref }}', '{{ $items('Already Sent?', 0, 0)[$itemIndex].json.dd_hash }}', '{{ $json.data }}');"
-        },
-        "position": [
-          1648,
-          544
-        ],
-        "type": "n8n-nodes-base.postgres",
-        "typeVersion": 2.6
-      },
-      {
         "id": "ddac961d-cdd5-4b4b-a586-f18739037d6c",
         "name": "Dojo Data Hash",
         "parameters": {
@@ -835,22 +808,6 @@
         "typeVersion": 1
       },
       {
-        "id": "4b0af008-0b2d-4d84-8be2-ed245d3a66f3",
-        "name": "Sticky Note17",
-        "parameters": {
-          "color": 5,
-          "content": "### Checkpoint Ticket\nCheckpoint data keseluruhan supaya tidak terjadi Infinite Loop",
-          "height": 288,
-          "width": 192
-        },
-        "position": [
-          1600,
-          416
-        ],
-        "type": "n8n-nodes-base.stickyNote",
-        "typeVersion": 1
-      },
-      {
         "id": "49ac6b57-2714-4a6c-a3e2-5d2d906860e3",
         "name": "Sticky Note16",
         "parameters": {
@@ -894,8 +851,8 @@
     "staticData": null,
     "tags": [],
     "triggerCount": 0,
-    "updatedAt": "2026-02-25T03:55:33.700Z",
-    "versionCounter": 5,
-    "versionId": "d79a14bc-692d-48f4-9a60-bf7eea0807d5"
+    "updatedAt": "2026-02-26T10:13:51.109Z",
+    "versionCounter": 6,
+    "versionId": "4e998e29-5890-4598-a0ca-422eb1b3c8b3"
   }
 ]
