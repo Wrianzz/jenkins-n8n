@@ -1,0 +1,386 @@
+[
+  {
+    "active": false,
+    "activeVersionId": null,
+    "connections": {
+      "Compare Logic": {
+        "main": [
+          [
+            {
+              "index": 0,
+              "node": "If Changes Detected",
+              "type": "main"
+            }
+          ]
+        ]
+      },
+      "Define Paths": {
+        "main": [
+          [
+            {
+              "index": 0,
+              "node": "Get FTP Files",
+              "type": "main"
+            }
+          ]
+        ]
+      },
+      "Ensure Schema Exists": {
+        "main": [
+          [
+            {
+              "index": 0,
+              "node": "Define Paths",
+              "type": "main"
+            }
+          ]
+        ]
+      },
+      "Get DB Files": {
+        "main": [
+          [
+            {
+              "index": 0,
+              "node": "Compare Logic",
+              "type": "main"
+            }
+          ]
+        ]
+      },
+      "Get FTP Files": {
+        "main": [
+          [
+            {
+              "index": 0,
+              "node": "Get DB Files",
+              "type": "main"
+            }
+          ]
+        ]
+      },
+      "If Changes Detected": {
+        "main": [
+          [
+            {
+              "index": 0,
+              "node": "Split New Files",
+              "type": "main"
+            },
+            {
+              "index": 0,
+              "node": "Split Deleted Files",
+              "type": "main"
+            }
+          ],
+          [
+            {
+              "index": 0,
+              "node": "Send email",
+              "type": "main"
+            }
+          ]
+        ]
+      },
+      "Schedule Trigger": {
+        "main": [
+          [
+            {
+              "index": 0,
+              "node": "Ensure Schema Exists",
+              "type": "main"
+            }
+          ]
+        ]
+      },
+      "Split Deleted Files": {
+        "main": [
+          [
+            {
+              "index": 0,
+              "node": "Delete Old (No Params)",
+              "type": "main"
+            }
+          ]
+        ]
+      },
+      "Split New Files": {
+        "main": [
+          [
+            {
+              "index": 0,
+              "node": "Insert New (No Params)",
+              "type": "main"
+            }
+          ]
+        ]
+      },
+      "When clicking ‘Execute workflow’": {
+        "main": [
+          [
+            {
+              "index": 0,
+              "node": "Ensure Schema Exists",
+              "type": "main"
+            }
+          ]
+        ]
+      }
+    },
+    "createdAt": "2026-02-25T01:19:08.258Z",
+    "description": null,
+    "id": "7Vg_4mmt6T0wu635E8stS",
+    "isArchived": false,
+    "meta": null,
+    "name": "Beta",
+    "nodes": [
+      {
+        "id": "3a52f0da-7aaf-4a38-a18a-0eb197c90fd1",
+        "name": "Schedule Trigger",
+        "parameters": {
+          "rule": {
+            "interval": [
+              {
+                "field": "minutes",
+                "minutesInterval": 30
+              }
+            ]
+          }
+        },
+        "position": [
+          -1648,
+          -32
+        ],
+        "type": "n8n-nodes-base.scheduleTrigger",
+        "typeVersion": 1.1
+      },
+      {
+        "alwaysOutputData": true,
+        "id": "29551ce1-6434-44dc-8fcd-4d89473b6949",
+        "name": "Ensure Schema Exists",
+        "parameters": {
+          "additionalFields": {},
+          "operation": "executeQuery",
+          "query": "CREATE TABLE IF NOT EXISTS ftp_files (\n    id SERIAL PRIMARY KEY,\n    path TEXT UNIQUE NOT NULL,\n    detected_at TIMESTAMP DEFAULT NOW()\n);"
+        },
+        "position": [
+          -1408,
+          64
+        ],
+        "type": "n8n-nodes-base.postgres",
+        "typeVersion": 1
+      },
+      {
+        "id": "64b51c23-7218-45d7-8645-fd112728ece2",
+        "name": "Define Paths",
+        "parameters": {
+          "jsCode": "// CONFIG: Daftar folder yang mau di-monitor\nreturn [\n  { targetPath: '/' }\n];"
+        },
+        "position": [
+          -1200,
+          64
+        ],
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2
+      },
+      {
+        "alwaysOutputData": false,
+        "id": "2f188cf9-d111-44ab-9930-d46dca4a409d",
+        "name": "Get FTP Files",
+        "parameters": {
+          "operation": "list",
+          "options": {},
+          "path": "=/"
+        },
+        "position": [
+          -992,
+          64
+        ],
+        "type": "n8n-nodes-base.ftp",
+        "typeVersion": 1
+      },
+      {
+        "alwaysOutputData": true,
+        "id": "9ee5ee78-0fe4-4eb2-beef-9dabddbfe714",
+        "name": "Get DB Files",
+        "parameters": {
+          "additionalFields": {},
+          "operation": "executeQuery",
+          "query": "SELECT path FROM ftp_files;"
+        },
+        "position": [
+          -768,
+          64
+        ],
+        "type": "n8n-nodes-base.postgres",
+        "typeVersion": 1
+      },
+      {
+        "id": "6401597b-0484-4d55-ab93-061a9653ed50",
+        "name": "Compare Logic",
+        "parameters": {
+          "jsCode": "// 1. CURRENT FILES (FTP)\n// Ambil semua hasil scan dari semua folder\nconst allFtpItems = $('Get FTP Files').all();\n// Map ke path, lalu HAPUS DUPLIKAT dengan Set (jika ada overlap), lalu sort\nconst currentFiles = [...new Set(allFtpItems.map(item => item.json.path))].sort();\n\n// 2. EXISTING FILES (DB)\n// PENTING: Karena node DB berjalan berulang (looping), data DB akan terduplikasi.\n// Kita WAJIB melakukan de-duplikasi di sini agar tidak ada triple-count.\nconst allDbItems = $('Get DB Files').all();\nconst dbFiles = [...new Set(allDbItems.map(item => item.json.path))].sort();\n\n// 3. COMPARE\n// Logic filter biasa (sudah aman karena data di atas sudah bersih/unik)\nconst newFiles = currentFiles.filter(x => !dbFiles.includes(x));\nconst deletedFiles = dbFiles.filter(x => !currentFiles.includes(x));\n\n// Cek apakah ada perubahan\nconst hasChanges = (newFiles.length > 0 || deletedFiles.length > 0);\n\nreturn {\n  json: {\n    hasChanges,\n    newFiles,\n    deletedFiles,\n    // Kita kirim summary teks untuk dipakai di Email\n    summary: `Changes Detected (Added: ${newFiles.length}, Deleted: ${deletedFiles.length})`\n  }\n};"
+        },
+        "position": [
+          -544,
+          64
+        ],
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2
+      },
+      {
+        "id": "7da2c154-7e6f-4291-b42c-6dbda8c62615",
+        "name": "If Changes Detected",
+        "parameters": {
+          "conditions": {
+            "boolean": [
+              {
+                "value1": "={{ $json.hasChanges }}",
+                "value2": true
+              }
+            ]
+          }
+        },
+        "position": [
+          -320,
+          64
+        ],
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 1
+      },
+      {
+        "id": "691ff60c-4c89-4fdf-b9af-f0a0d0443c6c",
+        "name": "Split New Files",
+        "parameters": {
+          "jsCode": "// SPLIT NEW FILES (Agar insert satu per satu)\nconst newFiles = items[0].json.newFiles;\nif (!newFiles || newFiles.length === 0) return [];\n\nreturn newFiles.map(filePath => {\n  return { json: { path: filePath } };\n});"
+        },
+        "position": [
+          -48,
+          -160
+        ],
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2
+      },
+      {
+        "id": "8b7a8a8d-2b48-402e-bf96-d50b50f17c93",
+        "name": "Insert New (No Params)",
+        "parameters": {
+          "additionalFields": {},
+          "operation": "executeQuery",
+          "query": "={{ \"INSERT INTO ftp_files (path) VALUES ('\" + $json.path + \"') ON CONFLICT (path) DO NOTHING;\" }}"
+        },
+        "position": [
+          176,
+          -160
+        ],
+        "type": "n8n-nodes-base.postgres",
+        "typeVersion": 1
+      },
+      {
+        "id": "5262ca9c-a4e6-4d44-9c1b-0e63efa41b3c",
+        "name": "Split Deleted Files",
+        "parameters": {
+          "jsCode": "// SPLIT DELETED FILES (Agar delete satu per satu)\nconst deletedFiles = $('Compare Logic').first().json.deletedFiles;\nif (!deletedFiles || deletedFiles.length === 0) return [];\n\nreturn deletedFiles.map(filePath => {\n  return { json: { path: filePath } };\n});"
+        },
+        "position": [
+          -48,
+          16
+        ],
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2
+      },
+      {
+        "id": "1482e084-a52f-42ad-9304-6d6f431bd235",
+        "name": "Delete Old (No Params)",
+        "parameters": {
+          "additionalFields": {},
+          "operation": "executeQuery",
+          "query": "={{ \"DELETE FROM ftp_files WHERE path = '\" + $json.path + \"';\" }}"
+        },
+        "position": [
+          176,
+          16
+        ],
+        "type": "n8n-nodes-base.postgres",
+        "typeVersion": 1
+      },
+      {
+        "id": "e2353b98-0ee5-45e1-ab21-1f5360adadef",
+        "name": "Send email",
+        "parameters": {
+          "fromEmail": "FTP TCL Mobile <noreply@satnusa.com>",
+          "html": "={{ \n  (() => {\n    const data = $('Compare Logic').first().json;\n    \n    // Style dasar untuk font yang enak dibaca (Monospace untuk path file)\n    let html = `<div style=\"font-family: Arial, sans-serif; color: #333;\">`;\n    \n    html += `<h3>FTP Monitoring Report</h3>`;\n    html += `<p>${data.summary}</p>`;\n    html += `<hr style=\"border: 0; border-top: 1px solid #eee;\">`;\n\n    // 1. Logic New File (Warna Hijau)\n    if (data.newFiles && data.newFiles.length > 0) {\n      html += `<h4 style=\"color: #2e7d32; margin-bottom: 5px;\">✅ NEW FILES ADDED:</h4>`;\n      html += `<pre style=\"background: #f1f8e9; padding: 10px; border-radius: 5px; font-family: Consolas, monospace;\">`;\n      html += data.newFiles.join('\\n');\n      html += `</pre>`;\n    }\n\n    // 2. Logic Deleted File (Warna Merah)\n    if (data.deletedFiles && data.deletedFiles.length > 0) {\n      html += `<h4 style=\"color: #c62828; margin-bottom: 5px;\">❌ FILES DELETED:</h4>`;\n      html += `<pre style=\"background: #ffebee; padding: 10px; border-radius: 5px; font-family: Consolas, monospace;\">`;\n      html += data.deletedFiles.join('\\n');\n      html += `</pre>`;\n    }\n    html += `</div>`;\n    return html;\n  })() \n}}",
+          "options": {
+            "appendAttribution": false,
+            "bccEmail": "o.midiyanto@satnusa.com, victor@satnusa.com"
+          },
+          "subject": "FTP TCL Mobile: File Changes Monitoring",
+          "toEmail": "danny.lim@satnusa.com, rina@satnusa.com, melda.aprillyta@satnusa.com, veronica.nataliya@satnusa.com, joycelineliu@satnusa.com, elysia.tan@satnusa.com, fui.ling@satnusa.com, kevin.lun@satnusa.com, hanita.kang@satnusa.com, adam.cong@satnusa.com, la.ciang@satnusa.com, bendi.safero@satnusa.com, jacky.chandra@satnusa.com, novi.dharmayani@satnusa.com, jefri.goh@satnusa.com, kenny.wilson@satnusa.com, louis.kho@satnusa.com, nursudiono.ceng@satnusa.com, stella.lee@satnusa.com, siska.yuwanda@satnusa.com, jescey.lim@satnusa.com, calvin@satnusa.com, rizo.marko@satnusa.com, eri.suhairi@satnusa.com, arman.athing@satnusa.com"
+        },
+        "position": [
+          -48,
+          224
+        ],
+        "type": "n8n-nodes-base.emailSend",
+        "typeVersion": 2.1,
+        "webhookId": "f7f4ebfa-cbe0-408e-b212-e152ecd6e5f8"
+      },
+      {
+        "id": "ce0465f3-35f4-4629-bf48-d0791825a8b2",
+        "name": "When clicking ‘Execute workflow’",
+        "parameters": {},
+        "position": [
+          -1648,
+          160
+        ],
+        "type": "n8n-nodes-base.manualTrigger",
+        "typeVersion": 1
+      },
+      {
+        "alwaysOutputData": true,
+        "id": "8ee6b58f-dd06-4896-872b-235cb405a136",
+        "name": "Clean DB",
+        "parameters": {
+          "additionalFields": {},
+          "operation": "executeQuery",
+          "query": "TRUNCATE TABLE ftp_files RESTART IDENTITY;"
+        },
+        "position": [
+          -1920,
+          64
+        ],
+        "type": "n8n-nodes-base.postgres",
+        "typeVersion": 1
+      }
+    ],
+    "pinData": {},
+    "settings": {
+      "availableInMCP": false,
+      "executionOrder": "v1"
+    },
+    "shared": [
+      {
+        "createdAt": "2026-02-25T01:19:08.258Z",
+        "project": {
+          "createdAt": "2026-02-05T03:42:57.879Z",
+          "creatorId": "a8a031e5-324d-4510-8061-83d160c23002",
+          "description": null,
+          "icon": null,
+          "id": "0yndx2RxYhns8Dri",
+          "name": "Rex Lapis <rizki.rama1314@gmail.com>",
+          "type": "personal",
+          "updatedAt": "2026-02-05T03:48:24.838Z"
+        },
+        "projectId": "0yndx2RxYhns8Dri",
+        "role": "workflow:owner",
+        "updatedAt": "2026-02-25T01:19:08.258Z",
+        "workflowId": "7Vg_4mmt6T0wu635E8stS"
+      }
+    ],
+    "staticData": null,
+    "tags": [],
+    "triggerCount": 0,
+    "updatedAt": "2026-02-25T01:19:15.407Z",
+    "versionCounter": 2,
+    "versionId": "5973c95f-f81b-4cd8-b961-fe4f1791f383"
+  }
+]
