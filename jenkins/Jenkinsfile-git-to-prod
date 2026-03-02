@@ -1,28 +1,107 @@
 pipeline {
   agent any
+
   parameters {
-    string(name: 'WORKFLOW_ID', defaultValue: '', description: 'Workflow ID, file must exist as workflows/<ID>.json')
+    choice(
+      name: 'PIPELINE_MODE',
+      choices: ['DEV_TO_REPO', 'REPO_TO_PROD', 'DEV_TO_PROD'],
+      description: 'Pilih mode pipeline: DEV_TO_REPO | REPO_TO_PROD | DEV_TO_PROD'
+    )
   }
+
   environment {
-    PROD_CONTAINER = 'n8n-prod-n8n-prod-1'
+    # Hardcoded workflow ID (ubah sesuai kebutuhan)
+    WORKFLOW_ID       = '_QxJ0DbrFXYg8xAVVFsz3'
+
+    DEV_CONTAINER     = 'n8n-dev-n8n-dev-1'
+    PROD_CONTAINER    = 'n8n-prod-n8n-prod-1'
     PROD_PG_CONTAINER = 'n8n-prod-postgres-prod-1'
+
+    REPO_HTTPS = 'https://github.com/Wrianzz/jenkins-n8n.git'
+    GIT_CRED_ID = 'jenkins-n8n'
   }
+
   stages {
     stage('Approval') {
+      when {
+        expression {
+          params.PIPELINE_MODE in ['REPO_TO_PROD', 'DEV_TO_PROD']
+        }
+      }
       steps {
-        input message: "Apakah kamu yakin ingin mendeploy workflow dengan ID: ${params.WORKFLOW_ID}?", 
-              ok: 'Deploy Sekarang',
+        input message: "Mode ${params.PIPELINE_MODE}: yakin lanjut promote credentials + deploy workflow ID ${env.WORKFLOW_ID} ke PROD?",
+              ok: 'Approve & Continue',
               submitter: 'morax'
       }
     }
+
     stage('Checkout main') {
-      steps { checkout scm }
+      steps {
+        checkout([$class: 'GitSCM',
+          branches: [[name: '*/main']],
+          userRemoteConfigs: [[
+            url: "${REPO_HTTPS}",
+            credentialsId: "${GIT_CRED_ID}"
+          ]]
+        ])
+      }
     }
-    stage('Deploy one workflow') {
+
+    stage('Dev -> Repo (export)') {
+      when {
+        expression {
+          params.PIPELINE_MODE in ['DEV_TO_REPO', 'DEV_TO_PROD']
+        }
+      }
       steps {
         sh '''
           set -e
-          chmod +x scripts/deploy-from-git.sh
+          chmod +x scripts/export-to-git.sh
+          scripts/export-to-git.sh "$WORKFLOW_ID"
+        '''
+      }
+    }
+
+    stage('Commit & push to main') {
+      when {
+        expression {
+          params.PIPELINE_MODE in ['DEV_TO_REPO', 'DEV_TO_PROD']
+        }
+      }
+      steps {
+        withCredentials([usernamePassword(
+          credentialsId: "${GIT_CRED_ID}",
+          usernameVariable: 'GH_USER',
+          passwordVariable: 'GH_PAT'
+        )]) {
+          sh '''
+            set -e
+            set +x
+
+            git status
+            git config user.email "jenkins@local"
+            git config user.name  "jenkins"
+
+            git add workflows/*.json
+            git commit -m "export workflow ${WORKFLOW_ID} from dev" || echo "No changes"
+
+            git remote set-url origin "https://${GH_USER}:${GH_PAT}@github.com/Wrianzz/jenkins-n8n.git"
+            git push origin HEAD:main
+          '''
+        }
+      }
+    }
+
+    stage('Repo -> Prod (promote creds + deploy)') {
+      when {
+        expression {
+          params.PIPELINE_MODE in ['REPO_TO_PROD', 'DEV_TO_PROD']
+        }
+      }
+      steps {
+        sh '''
+          set -e
+          chmod +x scripts/deploy-from-git.sh scripts/promote-creds.sh
           scripts/deploy-from-git.sh "$WORKFLOW_ID"
         '''
       }
