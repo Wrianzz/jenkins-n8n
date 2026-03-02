@@ -7,10 +7,12 @@ pipeline {
       choices: ['DEV_TO_REPO', 'REPO_TO_PROD', 'DEV_TO_PROD'],
       description: 'Pilih mode pipeline: DEV_TO_REPO | REPO_TO_PROD | DEV_TO_PROD'
     )
-    string(name: 'WORKFLOW_ID', defaultValue: '', description: 'Workflow ID (workflows/<ID>.json)')
   }
 
   environment {
+    # Hardcoded workflow ID (ubah sesuai kebutuhan)
+    WORKFLOW_ID       = '_QxJ0DbrFXYg8xAVVFsz3'
+
     DEV_CONTAINER     = 'n8n-dev-n8n-dev-1'
     PROD_CONTAINER    = 'n8n-prod-n8n-prod-1'
     PROD_PG_CONTAINER = 'n8n-prod-postgres-prod-1'
@@ -37,7 +39,7 @@ pipeline {
         }
       }
       steps {
-        input message: "Mode ${params.PIPELINE_MODE}: yakin lanjut promote credentials + deploy workflow ID ${params.WORKFLOW_ID} ke PROD?",
+        input message: "Mode ${params.PIPELINE_MODE}: yakin lanjut promote credentials + deploy workflow ID ${env.WORKFLOW_ID} ke PROD?",
               ok: 'Approve & Continue',
               submitter: 'morax'
       }
