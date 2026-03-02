@@ -1,28 +1,36 @@
 pipeline {
   agent any
+
   parameters {
     string(name: 'WORKFLOW_ID', defaultValue: '', description: 'Workflow ID, file must exist as workflows/<ID>.json')
   }
+
   environment {
-    PROD_CONTAINER = 'n8n-prod-n8n-prod-1'
+    DEV_CONTAINER     = 'n8n-dev-n8n-dev-1'
+    PROD_CONTAINER    = 'n8n-prod-n8n-prod-1'
     PROD_PG_CONTAINER = 'n8n-prod-postgres-prod-1'
   }
+
   stages {
     stage('Approval') {
       steps {
-        input message: "Apakah kamu yakin ingin mendeploy workflow dengan ID: ${params.WORKFLOW_ID}?", 
-              ok: 'Deploy Sekarang',
+        input message: "Apakah kamu yakin ingin promote credential dan deploy workflow dengan ID: ${params.WORKFLOW_ID}?",
+              ok: 'Promote & Deploy',
               submitter: 'morax'
       }
     }
+
     stage('Checkout main') {
-      steps { checkout scm }
+      steps {
+        checkout scm
+      }
     }
-    stage('Deploy one workflow') {
+
+    stage('Promote creds + deploy workflow') {
       steps {
         sh '''
           set -e
-          chmod +x scripts/deploy-from-git.sh
+          chmod +x scripts/deploy-from-git.sh scripts/promote-creds.sh
           scripts/deploy-from-git.sh "$WORKFLOW_ID"
         '''
       }
