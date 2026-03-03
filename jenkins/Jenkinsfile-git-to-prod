@@ -11,8 +11,19 @@ pipeline {
 
   environment {
     # Hardcoded workflow ID (ubah sesuai kebutuhan)
-    WORKFLOW_ID       = '_QxJ0DbrFXYg8xAVVFsz3'
+    WORKFLOW_ID = '_QxJ0DbrFXYg8xAVVFsz3'
 
+    # SSH configs (antar-server)
+    SSH_CRED_ID  = 'n8n-cross-server-ssh'
+    DEV_SSH_HOST = 'dev-n8n.internal'
+    DEV_SSH_USER = 'ubuntu'
+    DEV_SSH_PORT = '22'
+
+    PROD_SSH_HOST = 'prod-n8n.internal'
+    PROD_SSH_USER = 'ubuntu'
+    PROD_SSH_PORT = '22'
+
+    # Remote container names
     DEV_CONTAINER     = 'n8n-dev-n8n-dev-1'
     PROD_CONTAINER    = 'n8n-prod-n8n-prod-1'
     PROD_PG_CONTAINER = 'n8n-prod-postgres-prod-1'
@@ -64,11 +75,13 @@ pipeline {
         }
       }
       steps {
-        sh '''
-          set -e
-          chmod +x scripts/export-to-git.sh
-          scripts/export-to-git.sh "$WORKFLOW_ID"
-        '''
+        sshagent(credentials: ["${SSH_CRED_ID}"]) {
+          sh '''
+            set -e
+            chmod +x scripts/export-to-git.sh
+            scripts/export-to-git.sh "$WORKFLOW_ID"
+          '''
+        }
       }
     }
 
@@ -109,11 +122,13 @@ pipeline {
         }
       }
       steps {
-        sh '''
-          set -e
-          chmod +x scripts/deploy-from-git.sh scripts/promote-creds.sh
-          scripts/deploy-from-git.sh "$WORKFLOW_ID"
-        '''
+        sshagent(credentials: ["${SSH_CRED_ID}"]) {
+          sh '''
+            set -e
+            chmod +x scripts/deploy-from-git.sh scripts/promote-creds.sh
+            scripts/deploy-from-git.sh "$WORKFLOW_ID"
+          '''
+        }
       }
     }
   }
