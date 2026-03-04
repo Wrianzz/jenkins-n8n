@@ -8,22 +8,22 @@
           [
             {
               "index": 0,
-              "node": "Get collection",
+              "node": "DebugHelper",
               "type": "main"
             }
           ]
         ]
       }
     },
-    "createdAt": "2026-02-25T01:17:48.632Z",
+    "createdAt": "2026-03-04T07:04:12.792Z",
     "description": null,
-    "id": "Wnd_S7zlPo3Oa-gnExN2u",
+    "id": "bKyQKzdknDiX6vbN",
     "isArchived": false,
     "meta": null,
-    "name": "Alpha",
+    "name": "My workflow 2",
     "nodes": [
       {
-        "id": "01465a5c-590a-4008-9a3e-c857f1a0ed1c",
+        "id": "6821f5da-9262-424b-a6ab-f3807bb8feb9",
         "name": "When clicking ‘Execute workflow’",
         "parameters": {},
         "position": [
@@ -34,49 +34,51 @@
         "typeVersion": 1
       },
       {
-        "id": "c5ad240f-6e4a-45a7-97c1-5cb3d559bed9",
-        "name": "Get collection",
-        "parameters": {
-          "operation": "get",
-          "requestOptions": {}
-        },
+        "id": "662a9e75-5f09-4f0a-bb32-1ee0ea46107e",
+        "name": "DebugHelper",
+        "parameters": {},
         "position": [
-          192,
+          208,
           0
         ],
-        "type": "n8n-nodes-base.adalo",
+        "type": "n8n-nodes-base.debugHelper",
         "typeVersion": 1
       }
     ],
     "pinData": {},
     "settings": {
       "availableInMCP": false,
+      "binaryMode": "separate",
       "executionOrder": "v1"
     },
     "shared": [
       {
-        "createdAt": "2026-02-25T01:17:48.632Z",
+        "createdAt": "2026-03-04T07:04:12.792Z",
         "project": {
-          "createdAt": "2026-02-05T03:42:57.879Z",
-          "creatorId": "a8a031e5-324d-4510-8061-83d160c23002",
+          "createdAt": "2026-03-03T04:33:18.488Z",
+          "creatorId": "6c358ba5-555a-4cdc-9d29-932fdd83dc87",
           "description": null,
           "icon": null,
-          "id": "0yndx2RxYhns8Dri",
-          "name": "Rex Lapis <rizki.rama1314@gmail.com>",
+          "id": "EceIyNaf2jjgvT88",
+          "name": "a a <a@gmail.com>",
           "type": "personal",
-          "updatedAt": "2026-02-05T03:48:24.838Z"
+          "updatedAt": "2026-03-03T07:17:49.508Z"
         },
-        "projectId": "0yndx2RxYhns8Dri",
+        "projectId": "EceIyNaf2jjgvT88",
         "role": "workflow:owner",
-        "updatedAt": "2026-02-25T01:17:48.632Z",
-        "workflowId": "Wnd_S7zlPo3Oa-gnExN2u"
+        "updatedAt": "2026-03-04T07:04:12.792Z",
+        "workflowId": "bKyQKzdknDiX6vbN"
       }
     ],
     "staticData": null,
     "tags": [],
     "triggerCount": 0,
-    "updatedAt": "2026-02-25T02:52:20.657Z",
-    "versionCounter": 4,
-    "versionId": "bc0af1d5-09a6-494d-bc5b-0324685eaf2f"
+    "updatedAt": "2026-03-04T07:04:17.196Z",
+    "versionCounter": 2,
+    "versionId": "6850e46c-699a-4da9-b190-8c3f417492d4",
+    "versionMetadata": {
+      "description": null,
+      "name": null
+    }
   }
 ]
