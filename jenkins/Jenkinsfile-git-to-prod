@@ -128,7 +128,10 @@ pipeline {
             git config user.email "jenkins@local"
             git config user.name  "jenkins"
 
-            git add "workflows/${WORKFLOW_ID}.json"
+            # pastikan branch workflow ini hanya menyimpan 1 file workflow target
+            find workflows -maxdepth 1 -type f -name '*.json' ! -name "${WORKFLOW_ID}.json" -delete || true
+
+            git add -A workflows/
             git commit -m "export workflow ${WORKFLOW_ID} from dev" || echo "No changes"
 
             git remote set-url origin "https://${GH_USER}:${GH_PAT}@github.com/Wrianzz/jenkins-n8n.git"
@@ -162,7 +165,7 @@ pipeline {
             git checkout -B main origin/main
             git checkout "origin/wf/${WORKFLOW_ID}" -- "workflows/${WORKFLOW_ID}.json"
 
-            if git diff --quiet -- "workflows/${WORKFLOW_ID}.json"; then
+            if git diff --quiet HEAD -- "workflows/${WORKFLOW_ID}.json"; then
               echo "[INFO] workflows/${WORKFLOW_ID}.json already up to date in main"
             else
               git add "workflows/${WORKFLOW_ID}.json"
