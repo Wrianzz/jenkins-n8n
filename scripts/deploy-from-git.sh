@@ -10,6 +10,7 @@ PROD_SSH_USER="${PROD_SSH_USER:-}"
 PROD_SSH_PORT="${PROD_SSH_PORT:-22}"
 PROD_CONTAINER="${PROD_CONTAINER:-n8n-prod-n8n-prod-1}"
 PROD_PG_CONTAINER="${PROD_PG_CONTAINER:-n8n-prod-postgres-prod-1}"
+SSH_KEY_FILE="${SSH_KEY_FILE:-}"
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 WF_DIR="${REPO_ROOT}/workflows"
@@ -19,13 +20,15 @@ PROMOTE_SCRIPT="${REPO_ROOT}/scripts/promote-creds.sh"
 PROD_REMOTE="${PROD_SSH_USER:+${PROD_SSH_USER}@}${PROD_SSH_HOST}"
 PROD_SSH_OPTS=( -p "$PROD_SSH_PORT" -o BatchMode=yes -o StrictHostKeyChecking=accept-new )
 PROD_SCP_OPTS=( -P "$PROD_SSH_PORT" -o BatchMode=yes -o StrictHostKeyChecking=accept-new )
+if [[ -n "$SSH_KEY_FILE" ]]; then
+  PROD_SSH_OPTS+=( -i "$SSH_KEY_FILE" )
+  PROD_SCP_OPTS+=( -i "$SSH_KEY_FILE" )
+fi
 
-# auto projectId (prod kamu 1 project)
 PROD_PROJECT_ID="$(ssh "${PROD_SSH_OPTS[@]}" "$PROD_REMOTE" \
   "docker exec '$PROD_PG_CONTAINER' psql -U n8n -d n8n -tA -c \"select id from project order by \\\"createdAt\\\" asc limit 1;\"" | tr -d '\r' | xargs)"
 [[ -n "$PROD_PROJECT_ID" ]] || { echo "[ERR] PROD_PROJECT_ID not found"; exit 1; }
 
-# Resolve input
 WF_FILE=""
 if [[ "${1:-}" == "--file" ]]; then
   WF_FILE="${2:?usage: deploy-from-git.sh --file <path-to-json>}"
@@ -56,14 +59,9 @@ else
 fi
 
 echo "[2] Transfer and import workflow to PROD"
-echo "    File: $WF_FILE"
-echo "    PROD_PROJECT_ID: $PROD_PROJECT_ID"
-
 scp "${PROD_SCP_OPTS[@]}" "$WF_FILE" "$PROD_REMOTE:$remote_host_file"
 ssh "${PROD_SSH_OPTS[@]}" "$PROD_REMOTE" \
   "docker cp '$remote_host_file' '$PROD_CONTAINER:$remote_container_file' && docker exec '$PROD_CONTAINER' n8n import:workflow --input '$remote_container_file' --projectId '$PROD_PROJECT_ID'"
-
-# cleanup
 ssh "${PROD_SSH_OPTS[@]}" "$PROD_REMOTE" \
   "rm -f '$remote_host_file'; docker exec '$PROD_CONTAINER' sh -lc 'rm -f \"$remote_container_file\" || true'"
 

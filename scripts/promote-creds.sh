@@ -1,9 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Usage:
-#   scripts/promote-creds.sh "id1 id2 id3"
-#   scripts/promote-creds.sh "id1,id2,id3"
 CRED_IDS_RAW="${1:?usage: promote-creds.sh \"<CRED_IDs space/comma-separated>\"}"
 
 DEV_SSH_HOST="${DEV_SSH_HOST:?DEV_SSH_HOST is required}"
@@ -16,6 +13,7 @@ PROD_SSH_USER="${PROD_SSH_USER:-}"
 PROD_SSH_PORT="${PROD_SSH_PORT:-22}"
 PROD_CONTAINER="${PROD_CONTAINER:-n8n-prod-n8n-prod-1}"
 PROD_PG_CONTAINER="${PROD_PG_CONTAINER:-n8n-prod-postgres-prod-1}"
+SSH_KEY_FILE="${SSH_KEY_FILE:-}"
 
 RUN_ID="$(date +%Y%m%d-%H%M%S)-creds"
 TMP_DIR="/tmp/n8n-promote-${RUN_ID}"
@@ -26,8 +24,12 @@ PROD_REMOTE="${PROD_SSH_USER:+${PROD_SSH_USER}@}${PROD_SSH_HOST}"
 DEV_SSH_OPTS=( -p "$DEV_SSH_PORT" -o BatchMode=yes -o StrictHostKeyChecking=accept-new )
 PROD_SSH_OPTS=( -p "$PROD_SSH_PORT" -o BatchMode=yes -o StrictHostKeyChecking=accept-new )
 PROD_SCP_OPTS=( -P "$PROD_SSH_PORT" -o BatchMode=yes -o StrictHostKeyChecking=accept-new )
+if [[ -n "$SSH_KEY_FILE" ]]; then
+  DEV_SSH_OPTS+=( -i "$SSH_KEY_FILE" )
+  PROD_SSH_OPTS+=( -i "$SSH_KEY_FILE" )
+  PROD_SCP_OPTS+=( -i "$SSH_KEY_FILE" )
+fi
 
-# normalize input: comma -> space, collapse spaces
 CRED_IDS="$(echo "$CRED_IDS_RAW" | tr ',' ' ' | xargs)"
 
 get_prod_project_id() {
@@ -46,49 +48,34 @@ share_credential_to_project() {
     "docker exec '$PROD_PG_CONTAINER' psql -U n8n -d n8n -tA -c \"insert into shared_credentials(\\\"credentialsId\\\",\\\"projectId\\\",\\\"role\\\") values ('$cid','$pid','credential:owner') on conflict do nothing;\"" >/dev/null
 }
 
-echo "[0] Prepare local temp dir: ${CREDS_DIR}"
 mkdir -p "$CREDS_DIR"
-
-echo "[1] Determine PROD projectId"
 PROD_PROJECT_ID="$(get_prod_project_id)"
-echo "    PROD_PROJECT_ID=${PROD_PROJECT_ID}"
 
-echo "[2] Export credentials from DEV server"
 count=0
 for CID in $CRED_IDS; do
   [[ -z "${CID:-}" ]] && continue
-  echo "  - exporting credential id=$CID"
   ssh "${DEV_SSH_OPTS[@]}" "$DEV_REMOTE" \
     "docker exec '$DEV_CONTAINER' n8n export:credentials --id '$CID' --output /tmp/cred_${CID}.json"
   ssh "${DEV_SSH_OPTS[@]}" "$DEV_REMOTE" \
     "docker exec '$DEV_CONTAINER' cat /tmp/cred_${CID}.json" > "${CREDS_DIR}/cred_${CID}.json"
   count=$((count+1))
 done
+[[ "$count" -gt 0 ]] || { echo "[ERR] No credential IDs provided after normalization."; exit 1; }
 
-if [[ "$count" -eq 0 ]]; then
-  echo "[ERR] No credential IDs provided after normalization."
-  exit 1
-fi
-
-echo "[3] Transfer credentials to PROD server"
 ssh "${PROD_SSH_OPTS[@]}" "$PROD_REMOTE" "mkdir -p '/tmp/n8n-promote-creds-${RUN_ID}'"
 scp "${PROD_SCP_OPTS[@]}" "${CREDS_DIR}"/*.json "$PROD_REMOTE:/tmp/n8n-promote-creds-${RUN_ID}/"
-
-echo "[4] Import credentials into PROD"
 ssh "${PROD_SSH_OPTS[@]}" "$PROD_REMOTE" \
   "docker cp /tmp/n8n-promote-creds-${RUN_ID} '$PROD_CONTAINER:/tmp/n8n-promote-creds-${RUN_ID}' && docker exec '$PROD_CONTAINER' n8n import:credentials --separate --input /tmp/n8n-promote-creds-${RUN_ID} --projectId '$PROD_PROJECT_ID' || true"
 
-echo "[5] Ensure shared_credentials mapping exists"
 for CID in $CRED_IDS; do
   [[ -z "${CID:-}" ]] && continue
   share_credential_to_project "$CID" "$PROD_PROJECT_ID"
 done
 
-echo "[6] Cleanup"
 ssh "${PROD_SSH_OPTS[@]}" "$PROD_REMOTE" \
   "rm -rf /tmp/n8n-promote-creds-${RUN_ID}; docker exec '$PROD_CONTAINER' sh -lc 'rm -rf /tmp/n8n-promote-creds-${RUN_ID} /tmp/cred_*.json || true'"
 ssh "${DEV_SSH_OPTS[@]}" "$DEV_REMOTE" \
   "docker exec '$DEV_CONTAINER' sh -lc 'rm -f /tmp/cred_*.json || true'"
 rm -rf "$TMP_DIR"
 
-echo "[7] Done"
+echo "[OK] Promote credentials selesai"

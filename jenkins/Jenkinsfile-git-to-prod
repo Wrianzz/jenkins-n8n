@@ -10,10 +10,7 @@ pipeline {
   }
 
   environment {
-    # Hardcoded workflow ID (ubah sesuai kebutuhan)
     WORKFLOW_ID = '_QxJ0DbrFXYg8xAVVFsz3'
-
-    # SSH configs (antar-server)
     SSH_CRED_ID  = 'n8n-cross-server-ssh'
     DEV_SSH_HOST = 'dev-n8n.internal'
     DEV_SSH_USER = 'ubuntu'
@@ -23,7 +20,6 @@ pipeline {
     PROD_SSH_USER = 'ubuntu'
     PROD_SSH_PORT = '22'
 
-    # Remote container names
     DEV_CONTAINER     = 'n8n-dev-n8n-dev-1'
     PROD_CONTAINER    = 'n8n-prod-n8n-prod-1'
     PROD_PG_CONTAINER = 'n8n-prod-postgres-prod-1'
@@ -50,7 +46,7 @@ pipeline {
         }
       }
       steps {
-        input message: "Mode ${params.PIPELINE_MODE}: yakin lanjut promote credentials + deploy workflow ID ${env.WORKFLOW_ID} ke PROD?",
+        input message: "Mode ${params.PIPELINE_MODE}: yakin lanjut merge wf/${env.WORKFLOW_ID} ke main + deploy workflow ID ${env.WORKFLOW_ID} ke PROD?",
               ok: 'Approve & Continue',
               submitter: 'morax'
       }
@@ -68,6 +64,21 @@ pipeline {
       }
     }
 
+    stage('Prepare workflow branch') {
+      when {
+        expression {
+          params.PIPELINE_MODE in ['DEV_TO_REPO', 'DEV_TO_PROD']
+        }
+      }
+      steps {
+        sh '''
+          set -e
+          git fetch origin main
+          git checkout -B "wf/${WORKFLOW_ID}" origin/main
+        '''
+      }
+    }
+
     stage('Dev -> Repo (export)') {
       when {
         expression {
@@ -75,17 +86,21 @@ pipeline {
         }
       }
       steps {
-        sshagent(credentials: ["${SSH_CRED_ID}"]) {
+        withCredentials([sshUserPrivateKey(
+          credentialsId: "${SSH_CRED_ID}",
+          keyFileVariable: 'SSH_KEY_FILE'
+        )]) {
           sh '''
             set -e
             chmod +x scripts/export-to-git.sh
+            export SSH_KEY_FILE
             scripts/export-to-git.sh "$WORKFLOW_ID"
           '''
         }
       }
     }
 
-    stage('Commit & push to main') {
+    stage('Commit & push workflow branch') {
       when {
         expression {
           params.PIPELINE_MODE in ['DEV_TO_REPO', 'DEV_TO_PROD']
@@ -109,7 +124,41 @@ pipeline {
             git commit -m "export workflow ${WORKFLOW_ID} from dev" || echo "No changes"
 
             git remote set-url origin "https://${GH_USER}:${GH_PAT}@github.com/Wrianzz/jenkins-n8n.git"
-            git push origin HEAD:main
+            git push origin HEAD:"wf/${WORKFLOW_ID}"
+          '''
+        }
+      }
+    }
+
+    stage('Merge workflow branch to main') {
+      when {
+        expression {
+          params.PIPELINE_MODE in ['REPO_TO_PROD', 'DEV_TO_PROD']
+        }
+      }
+      steps {
+        withCredentials([usernamePassword(
+          credentialsId: "${GIT_CRED_ID}",
+          usernameVariable: 'GH_USER',
+          passwordVariable: 'GH_PAT'
+        )]) {
+          sh '''
+            set -e
+            set +x
+
+            git config user.email "jenkins@local"
+            git config user.name  "jenkins"
+            git remote set-url origin "https://${GH_USER}:${GH_PAT}@github.com/Wrianzz/jenkins-n8n.git"
+
+            git fetch origin main "wf/${WORKFLOW_ID}"
+            git checkout -B main origin/main
+
+            if git merge-base --is-ancestor "origin/wf/${WORKFLOW_ID}" HEAD; then
+              echo "[INFO] Branch wf/${WORKFLOW_ID} already merged into main"
+            else
+              git merge --no-ff "origin/wf/${WORKFLOW_ID}" -m "merge wf/${WORKFLOW_ID} into main for deploy"
+              git push origin HEAD:main
+            fi
           '''
         }
       }
@@ -122,10 +171,14 @@ pipeline {
         }
       }
       steps {
-        sshagent(credentials: ["${SSH_CRED_ID}"]) {
+        withCredentials([sshUserPrivateKey(
+          credentialsId: "${SSH_CRED_ID}",
+          keyFileVariable: 'SSH_KEY_FILE'
+        )]) {
           sh '''
             set -e
             chmod +x scripts/deploy-from-git.sh scripts/promote-creds.sh
+            export SSH_KEY_FILE
             scripts/deploy-from-git.sh "$WORKFLOW_ID"
           '''
         }
