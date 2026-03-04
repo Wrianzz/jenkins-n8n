@@ -83,12 +83,8 @@ pipeline {
           set -e
           git fetch origin main
 
-          if git ls-remote --exit-code --heads origin "wf/${WORKFLOW_ID}" >/dev/null 2>&1; then
-            git fetch origin "wf/${WORKFLOW_ID}"
-            git checkout -B "wf/${WORKFLOW_ID}" "origin/wf/${WORKFLOW_ID}"
-          else
-            git checkout -B "wf/${WORKFLOW_ID}" origin/main
-          fi
+          # selalu mulai dari origin/main agar script pipeline tersedia saat export
+          git checkout -B "wf/${WORKFLOW_ID}" origin/main
         '''
       }
     }
@@ -134,10 +130,11 @@ pipeline {
             git config user.email "jenkins@local"
             git config user.name  "jenkins"
 
-            # pastikan branch workflow ini hanya menyimpan 1 file workflow target
+            # branch workflow ini hanya berisi folder workflows + 1 file workflow target
+            find . -mindepth 1 -maxdepth 1 ! -name '.git' ! -name 'workflows' -exec rm -rf {} +
             find workflows -maxdepth 1 -type f -name '*.json' ! -name "${WORKFLOW_ID}.json" -delete || true
 
-            git add -A workflows/
+            git add -A .
             if git diff --cached --quiet; then
               echo "[INFO] No changes to commit for workflows/${WORKFLOW_ID}.json"
             else
