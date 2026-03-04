@@ -10,36 +10,26 @@ pipeline {
   }
 
   environment {
-    WORKFLOW_ID = '_QxJ0DbrFXYg8xAVVFsz3'
+    WORKFLOW_ID = ''
 
-    SSH_CRED_ID  = 'n8n-cross-server-ssh'
-    DEV_SSH_HOST = 'dev-n8n.internal'
-    DEV_SSH_USER = 'ubuntu'
-    DEV_SSH_PORT = '22'
+    SSH_CRED_ID  = ''
+    DEV_SSH_HOST = ''
+    DEV_SSH_USER = ''
+    DEV_SSH_PORT = ''
 
-    PROD_SSH_HOST = 'prod-n8n.internal'
-    PROD_SSH_USER = 'ubuntu'
-    PROD_SSH_PORT = '22'
+    PROD_SSH_HOST = ''
+    PROD_SSH_USER = ''
+    PROD_SSH_PORT = ''
 
-    DEV_CONTAINER     = 'n8n-dev-n8n-dev-1'
-    PROD_CONTAINER    = 'n8n-prod-n8n-prod-1'
-    PROD_PG_CONTAINER = 'n8n-prod-postgres-prod-1'
+    DEV_CONTAINER     = ''
+    PROD_CONTAINER    = ''
+    PROD_PG_CONTAINER = ''
 
-    REPO_HTTPS = 'https://github.com/Wrianzz/jenkins-n8n.git'
-    GIT_CRED_ID = 'jenkins-n8n'
+    REPO_HTTPS = ''
+    GIT_CRED_ID = ''
   }
 
   stages {
-    stage('Validate input') {
-      steps {
-        script {
-          if (!params.WORKFLOW_ID?.trim()) {
-            error('WORKFLOW_ID wajib diisi.')
-          }
-        }
-      }
-    }
-
     stage('Approval') {
       when {
         expression {
@@ -206,6 +196,13 @@ pipeline {
             scripts/deploy-from-git.sh "$WORKFLOW_ID"
           '''
         }
+      }
+    }
+  }
+  post{
+    always{
+      script{
+        cleanWs()
       }
     }
   }
