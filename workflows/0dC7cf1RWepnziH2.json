@@ -1,0 +1,104 @@
+[
+  {
+    "active": false,
+    "activeVersionId": null,
+    "connections": {
+      "Send a message": {
+        "main": [
+          []
+        ]
+      },
+      "When clicking ‘Execute workflow’": {
+        "main": [
+          [
+            {
+              "index": 0,
+              "node": "Send a message",
+              "type": "main"
+            }
+          ]
+        ]
+      }
+    },
+    "createdAt": "2026-03-03T07:18:00.890Z",
+    "description": null,
+    "id": "0dC7cf1RWepnziH2",
+    "isArchived": false,
+    "meta": {
+      "templateCredsSetupCompleted": true
+    },
+    "name": "My workflow",
+    "nodes": [
+      {
+        "id": "aba784a7-6b07-46a5-a339-4eadb3709ad4",
+        "name": "When clicking ‘Execute workflow’",
+        "parameters": {},
+        "position": [
+          0,
+          0
+        ],
+        "type": "n8n-nodes-base.manualTrigger",
+        "typeVersion": 1
+      },
+      {
+        "credentials": {
+          "gmailOAuth2": {
+            "id": "xfxtBIc0wT4as86G",
+            "name": "Gmail account"
+          }
+        },
+        "id": "6a891941-c003-4da5-b9ec-fd3b0a8ca9cf",
+        "name": "Send a message",
+        "parameters": {
+          "message": "asd",
+          "operation": "sendAndWait",
+          "options": {},
+          "sendTo": "asd",
+          "subject": "asd"
+        },
+        "position": [
+          208,
+          0
+        ],
+        "type": "n8n-nodes-base.gmail",
+        "typeVersion": 2.2,
+        "webhookId": "41b9a39d-062f-44d1-b00f-83e110ce6a3d"
+      }
+    ],
+    "pinData": {},
+    "settings": {
+      "availableInMCP": false,
+      "binaryMode": "separate",
+      "executionOrder": "v1"
+    },
+    "shared": [
+      {
+        "createdAt": "2026-03-03T07:18:00.890Z",
+        "project": {
+          "createdAt": "2026-03-03T04:33:18.488Z",
+          "creatorId": "6c358ba5-555a-4cdc-9d29-932fdd83dc87",
+          "description": null,
+          "icon": null,
+          "id": "EceIyNaf2jjgvT88",
+          "name": "a a <a@gmail.com>",
+          "type": "personal",
+          "updatedAt": "2026-03-03T07:17:49.508Z"
+        },
+        "projectId": "EceIyNaf2jjgvT88",
+        "role": "workflow:owner",
+        "updatedAt": "2026-03-03T07:18:00.890Z",
+        "workflowId": "0dC7cf1RWepnziH2"
+      }
+    ],
+    "staticData": null,
+    "tags": [],
+    "triggerCount": 0,
+    "updatedAt": "2026-03-04T07:38:29.924Z",
+    "versionCounter": 6,
+    "versionId": "45edbdcf-a8fc-46e2-9ca4-8daedb308f58",
+    "versionMetadata": {
+      "description": null,
+      "name": null
+    }
+  }
+]
