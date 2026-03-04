@@ -82,7 +82,13 @@ pipeline {
         sh '''
           set -e
           git fetch origin main
-          git checkout -B "wf/${WORKFLOW_ID}" origin/main
+
+          if git ls-remote --exit-code --heads origin "wf/${WORKFLOW_ID}" >/dev/null 2>&1; then
+            git fetch origin "wf/${WORKFLOW_ID}"
+            git checkout -B "wf/${WORKFLOW_ID}" "origin/wf/${WORKFLOW_ID}"
+          else
+            git checkout -B "wf/${WORKFLOW_ID}" origin/main
+          fi
         '''
       }
     }
@@ -124,7 +130,6 @@ pipeline {
             set -e
             set +x
 
-            git fetch origin "wf/${WORKFLOW_ID}" || true
             git status
             git config user.email "jenkins@local"
             git config user.name  "jenkins"
@@ -133,10 +138,18 @@ pipeline {
             find workflows -maxdepth 1 -type f -name '*.json' ! -name "${WORKFLOW_ID}.json" -delete || true
 
             git add -A workflows/
-            git commit -m "export workflow ${WORKFLOW_ID} from dev" || echo "No changes"
+            if git diff --cached --quiet; then
+              echo "[INFO] No changes to commit for workflows/${WORKFLOW_ID}.json"
+            else
+              git commit -m "export workflow ${WORKFLOW_ID} from dev"
+            fi
 
             git remote set-url origin "https://${GH_USER}:${GH_PAT}@github.com/Wrianzz/jenkins-n8n.git"
-            git push --force-with-lease origin HEAD:"wf/${WORKFLOW_ID}"
+            if git ls-remote --exit-code --heads origin "wf/${WORKFLOW_ID}" >/dev/null 2>&1; then
+              git push --force-with-lease origin HEAD:"wf/${WORKFLOW_ID}"
+            else
+              git push origin HEAD:"wf/${WORKFLOW_ID}"
+            fi
           '''
         }
       }
