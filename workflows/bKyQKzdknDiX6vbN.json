@@ -1,0 +1,84 @@
+[
+  {
+    "active": false,
+    "activeVersionId": null,
+    "connections": {
+      "When clicking ‘Execute workflow’": {
+        "main": [
+          [
+            {
+              "index": 0,
+              "node": "DebugHelper",
+              "type": "main"
+            }
+          ]
+        ]
+      }
+    },
+    "createdAt": "2026-03-04T07:04:12.792Z",
+    "description": null,
+    "id": "bKyQKzdknDiX6vbN",
+    "isArchived": false,
+    "meta": null,
+    "name": "My workflow 2",
+    "nodes": [
+      {
+        "id": "6821f5da-9262-424b-a6ab-f3807bb8feb9",
+        "name": "When clicking ‘Execute workflow’",
+        "parameters": {},
+        "position": [
+          0,
+          0
+        ],
+        "type": "n8n-nodes-base.manualTrigger",
+        "typeVersion": 1
+      },
+      {
+        "id": "662a9e75-5f09-4f0a-bb32-1ee0ea46107e",
+        "name": "DebugHelper",
+        "parameters": {},
+        "position": [
+          208,
+          0
+        ],
+        "type": "n8n-nodes-base.debugHelper",
+        "typeVersion": 1
+      }
+    ],
+    "pinData": {},
+    "settings": {
+      "availableInMCP": false,
+      "binaryMode": "separate",
+      "executionOrder": "v1"
+    },
+    "shared": [
+      {
+        "createdAt": "2026-03-04T07:04:12.792Z",
+        "project": {
+          "createdAt": "2026-03-03T04:33:18.488Z",
+          "creatorId": "6c358ba5-555a-4cdc-9d29-932fdd83dc87",
+          "description": null,
+          "icon": null,
+          "id": "EceIyNaf2jjgvT88",
+          "name": "a a <a@gmail.com>",
+          "type": "personal",
+          "updatedAt": "2026-03-03T07:17:49.508Z"
+        },
+        "projectId": "EceIyNaf2jjgvT88",
+        "role": "workflow:owner",
+        "updatedAt": "2026-03-04T07:04:12.792Z",
+        "workflowId": "bKyQKzdknDiX6vbN"
+      }
+    ],
+    "staticData": null,
+    "tags": [],
+    "triggerCount": 0,
+    "updatedAt": "2026-03-04T07:04:17.196Z",
+    "versionCounter": 2,
+    "versionId": "6850e46c-699a-4da9-b190-8c3f417492d4",
+    "versionMetadata": {
+      "description": null,
+      "name": null
+    }
+  }
+]
