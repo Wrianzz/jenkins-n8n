@@ -64,7 +64,7 @@ pipeline {
           extensions: [
             [$class: 'SparseCheckoutPaths', sparseCheckoutPaths: [
               [path: 'scripts/'],
-              [path: 'workflows/' + env.WORKFLOW_ID + '.json'],
+              [path: 'workflows/'],
               [path: 'jenkins/']
             ]]
           ]
@@ -124,6 +124,7 @@ pipeline {
             set -e
             set +x
 
+            git fetch origin "wf/${WORKFLOW_ID}" || true
             git status
             git config user.email "jenkins@local"
             git config user.name  "jenkins"
@@ -135,7 +136,7 @@ pipeline {
             git commit -m "export workflow ${WORKFLOW_ID} from dev" || echo "No changes"
 
             git remote set-url origin "https://${GH_USER}:${GH_PAT}@github.com/Wrianzz/jenkins-n8n.git"
-            git push origin HEAD:"wf/${WORKFLOW_ID}"
+            git push --force-with-lease origin HEAD:"wf/${WORKFLOW_ID}"
           '''
         }
       }
