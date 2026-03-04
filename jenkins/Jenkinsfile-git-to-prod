@@ -1,30 +1,201 @@
 pipeline {
   agent any
+
   parameters {
-    string(name: 'WORKFLOW_ID', defaultValue: '', description: 'Workflow ID, file must exist as workflows/<ID>.json')
+    choice(
+      name: 'PIPELINE_MODE',
+      choices: ['DEV_TO_REPO', 'REPO_TO_PROD', 'DEV_TO_PROD'],
+      description: 'Pilih mode pipeline: DEV_TO_REPO | REPO_TO_PROD | DEV_TO_PROD'
+    )
   }
+
   environment {
-    PROD_CONTAINER = 'n8n-prod-n8n-prod-1'
+    WORKFLOW_ID = '_QxJ0DbrFXYg8xAVVFsz3'
+
+    SSH_CRED_ID  = 'n8n-cross-server-ssh'
+    DEV_SSH_HOST = 'dev-n8n.internal'
+    DEV_SSH_USER = 'ubuntu'
+    DEV_SSH_PORT = '22'
+
+    PROD_SSH_HOST = 'prod-n8n.internal'
+    PROD_SSH_USER = 'ubuntu'
+    PROD_SSH_PORT = '22'
+
+    DEV_CONTAINER     = 'n8n-dev-n8n-dev-1'
+    PROD_CONTAINER    = 'n8n-prod-n8n-prod-1'
     PROD_PG_CONTAINER = 'n8n-prod-postgres-prod-1'
+
+    REPO_HTTPS = 'https://github.com/Wrianzz/jenkins-n8n.git'
+    GIT_CRED_ID = 'jenkins-n8n'
   }
+
   stages {
     stage('Approval') {
+      when {
+        expression {
+          params.PIPELINE_MODE in ['REPO_TO_PROD', 'DEV_TO_PROD']
+        }
+      }
       steps {
-        input message: "Apakah kamu yakin ingin mendeploy workflow dengan ID: ${params.WORKFLOW_ID}?", 
-              ok: 'Deploy Sekarang',
+        input message: "Mode ${params.PIPELINE_MODE}: yakin lanjut promote 1 file workflow (wf/${env.WORKFLOW_ID}) ke main + deploy ke PROD?",
+              ok: 'Approve & Continue',
               submitter: 'morax'
       }
     }
-    stage('Checkout main') {
-      steps { checkout scm }
+
+    stage('Checkout required files only') {
+      steps {
+        checkout([$class: 'GitSCM',
+          branches: [[name: '*/main']],
+          userRemoteConfigs: [[
+            url: "${REPO_HTTPS}",
+            credentialsId: "${GIT_CRED_ID}"
+          ]],
+          extensions: [
+            [$class: 'SparseCheckoutPaths', sparseCheckoutPaths: [
+              [path: 'scripts/'],
+              [path: 'workflows/'],
+              [path: 'jenkins/']
+            ]]
+          ]
+        ])
+      }
     }
-    stage('Deploy one workflow') {
+
+    stage('Prepare workflow branch') {
+      when {
+        expression {
+          params.PIPELINE_MODE in ['DEV_TO_REPO', 'DEV_TO_PROD']
+        }
+      }
       steps {
         sh '''
           set -e
-          chmod +x scripts/deploy-from-git.sh
-          scripts/deploy-from-git.sh "$WORKFLOW_ID"
+          git fetch origin main
+
+          # selalu mulai dari origin/main agar script pipeline tersedia saat export
+          git checkout -B "wf/${WORKFLOW_ID}" origin/main
         '''
+      }
+    }
+
+    stage('Dev -> Repo (export)') {
+      when {
+        expression {
+          params.PIPELINE_MODE in ['DEV_TO_REPO', 'DEV_TO_PROD']
+        }
+      }
+      steps {
+        withCredentials([sshUserPrivateKey(
+          credentialsId: "${SSH_CRED_ID}",
+          keyFileVariable: 'SSH_KEY_FILE'
+        )]) {
+          sh '''
+            set -e
+            chmod +x scripts/export-to-git.sh
+            export SSH_KEY_FILE
+            scripts/export-to-git.sh "$WORKFLOW_ID"
+          '''
+        }
+      }
+    }
+
+    stage('Commit & push workflow file only') {
+      when {
+        expression {
+          params.PIPELINE_MODE in ['DEV_TO_REPO', 'DEV_TO_PROD']
+        }
+      }
+      steps {
+        withCredentials([usernamePassword(
+          credentialsId: "${GIT_CRED_ID}",
+          usernameVariable: 'GH_USER',
+          passwordVariable: 'GH_PAT'
+        )]) {
+          sh '''
+            set -e
+            set +x
+
+            git status
+            git config user.email "jenkins@local"
+            git config user.name  "jenkins"
+
+            # branch workflow ini hanya berisi folder workflows + 1 file workflow target
+            find . -mindepth 1 -maxdepth 1 ! -name '.git' ! -name 'workflows' -exec rm -rf {} +
+            find workflows -maxdepth 1 -type f -name '*.json' ! -name "${WORKFLOW_ID}.json" -delete || true
+
+            git add -A .
+            if git diff --cached --quiet; then
+              echo "[INFO] No changes to commit for workflows/${WORKFLOW_ID}.json"
+            else
+              git commit -m "export workflow ${WORKFLOW_ID} from dev"
+            fi
+
+            git remote set-url origin "https://${GH_USER}:${GH_PAT}@github.com/Wrianzz/jenkins-n8n.git"
+            if git ls-remote --exit-code --heads origin "wf/${WORKFLOW_ID}" >/dev/null 2>&1; then
+              git push --force-with-lease origin HEAD:"wf/${WORKFLOW_ID}"
+            else
+              git push origin HEAD:"wf/${WORKFLOW_ID}"
+            fi
+          '''
+        }
+      }
+    }
+
+    stage('Promote workflow file to main only') {
+      when {
+        expression {
+          params.PIPELINE_MODE in ['REPO_TO_PROD', 'DEV_TO_PROD']
+        }
+      }
+      steps {
+        withCredentials([usernamePassword(
+          credentialsId: "${GIT_CRED_ID}",
+          usernameVariable: 'GH_USER',
+          passwordVariable: 'GH_PAT'
+        )]) {
+          sh '''
+            set -e
+            set +x
+
+            git config user.email "jenkins@local"
+            git config user.name  "jenkins"
+            git remote set-url origin "https://${GH_USER}:${GH_PAT}@github.com/Wrianzz/jenkins-n8n.git"
+
+            git fetch origin main "wf/${WORKFLOW_ID}"
+            git checkout -B main origin/main
+            git checkout "origin/wf/${WORKFLOW_ID}" -- "workflows/${WORKFLOW_ID}.json"
+
+            if git diff --quiet HEAD -- "workflows/${WORKFLOW_ID}.json"; then
+              echo "[INFO] workflows/${WORKFLOW_ID}.json already up to date in main"
+            else
+              git add "workflows/${WORKFLOW_ID}.json"
+              git commit -m "promote workflow ${WORKFLOW_ID} from wf branch to main"
+              git push origin HEAD:main
+            fi
+          '''
+        }
+      }
+    }
+
+    stage('Repo -> Prod (promote creds + deploy)') {
+      when {
+        expression {
+          params.PIPELINE_MODE in ['REPO_TO_PROD', 'DEV_TO_PROD']
+        }
+      }
+      steps {
+        withCredentials([sshUserPrivateKey(
+          credentialsId: "${SSH_CRED_ID}",
+          keyFileVariable: 'SSH_KEY_FILE'
+        )]) {
+          sh '''
+            set -e
+            chmod +x scripts/deploy-from-git.sh scripts/promote-creds.sh
+            export SSH_KEY_FILE
+            scripts/deploy-from-git.sh "$WORKFLOW_ID"
+          '''
+        }
       }
     }
   }
