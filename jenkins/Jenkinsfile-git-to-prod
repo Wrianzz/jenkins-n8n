@@ -11,6 +11,7 @@ pipeline {
 
   environment {
     WORKFLOW_ID = '_QxJ0DbrFXYg8xAVVFsz3'
+
     SSH_CRED_ID  = 'n8n-cross-server-ssh'
     DEV_SSH_HOST = 'dev-n8n.internal'
     DEV_SSH_USER = 'ubuntu'
@@ -46,20 +47,27 @@ pipeline {
         }
       }
       steps {
-        input message: "Mode ${params.PIPELINE_MODE}: yakin lanjut merge wf/${env.WORKFLOW_ID} ke main + deploy workflow ID ${env.WORKFLOW_ID} ke PROD?",
+        input message: "Mode ${params.PIPELINE_MODE}: yakin lanjut promote 1 file workflow (wf/${env.WORKFLOW_ID}) ke main + deploy ke PROD?",
               ok: 'Approve & Continue',
               submitter: 'morax'
       }
     }
 
-    stage('Checkout main') {
+    stage('Checkout required files only') {
       steps {
         checkout([$class: 'GitSCM',
           branches: [[name: '*/main']],
           userRemoteConfigs: [[
             url: "${REPO_HTTPS}",
             credentialsId: "${GIT_CRED_ID}"
-          ]]
+          ]],
+          extensions: [
+            [$class: 'SparseCheckoutPaths', sparseCheckoutPaths: [
+              [path: 'scripts/'],
+              [path: 'workflows/' + env.WORKFLOW_ID + '.json'],
+              [path: 'jenkins/']
+            ]]
+          ]
         ])
       }
     }
@@ -100,7 +108,7 @@ pipeline {
       }
     }
 
-    stage('Commit & push workflow branch') {
+    stage('Commit & push workflow file only') {
       when {
         expression {
           params.PIPELINE_MODE in ['DEV_TO_REPO', 'DEV_TO_PROD']
@@ -120,7 +128,7 @@ pipeline {
             git config user.email "jenkins@local"
             git config user.name  "jenkins"
 
-            git add workflows/*.json
+            git add "workflows/${WORKFLOW_ID}.json"
             git commit -m "export workflow ${WORKFLOW_ID} from dev" || echo "No changes"
 
             git remote set-url origin "https://${GH_USER}:${GH_PAT}@github.com/Wrianzz/jenkins-n8n.git"
@@ -130,7 +138,7 @@ pipeline {
       }
     }
 
-    stage('Merge workflow branch to main') {
+    stage('Promote workflow file to main only') {
       when {
         expression {
           params.PIPELINE_MODE in ['REPO_TO_PROD', 'DEV_TO_PROD']
@@ -152,11 +160,13 @@ pipeline {
 
             git fetch origin main "wf/${WORKFLOW_ID}"
             git checkout -B main origin/main
+            git checkout "origin/wf/${WORKFLOW_ID}" -- "workflows/${WORKFLOW_ID}.json"
 
-            if git merge-base --is-ancestor "origin/wf/${WORKFLOW_ID}" HEAD; then
-              echo "[INFO] Branch wf/${WORKFLOW_ID} already merged into main"
+            if git diff --quiet -- "workflows/${WORKFLOW_ID}.json"; then
+              echo "[INFO] workflows/${WORKFLOW_ID}.json already up to date in main"
             else
-              git merge --no-ff "origin/wf/${WORKFLOW_ID}" -m "merge wf/${WORKFLOW_ID} into main for deploy"
+              git add "workflows/${WORKFLOW_ID}.json"
+              git commit -m "promote workflow ${WORKFLOW_ID} from wf branch to main"
               git push origin HEAD:main
             fi
           '''
