@@ -30,6 +30,16 @@ pipeline {
   }
 
   stages {
+    stage('Validate input') {
+      steps {
+        script {
+          if (!params.WORKFLOW_ID?.trim()) {
+            error('WORKFLOW_ID wajib diisi.')
+          }
+        }
+      }
+    }
+
     stage('Approval') {
       when {
         expression {
