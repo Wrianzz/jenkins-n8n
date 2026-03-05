@@ -10,23 +10,23 @@ pipeline {
   }
 
   environment {
-    WORKFLOW_ID = ''
+    WORKFLOW_ID = '0dC7cf1RWepnziH2'
+    
+    SSH_CRED_ID  = 'n8n-cross-server-ssh'
+    DEV_SSH_HOST = '192.168.56.52'
+    DEV_SSH_USER = 'jenkins'
+    DEV_SSH_PORT = '22'
 
-    SSH_CRED_ID  = ''
-    DEV_SSH_HOST = ''
-    DEV_SSH_USER = ''
-    DEV_SSH_PORT = ''
+    PROD_SSH_HOST = '192.168.56.51'
+    PROD_SSH_USER = 'jenkins'
+    PROD_SSH_PORT = '22'
 
-    PROD_SSH_HOST = ''
-    PROD_SSH_USER = ''
-    PROD_SSH_PORT = ''
+    DEV_CONTAINER     = 'n8n-n8n-dev-1'
+    PROD_CONTAINER    = 'n8n-n8n-prod-1'
+    PROD_PG_CONTAINER = 'n8n-postgres-prod-1'
 
-    DEV_CONTAINER     = ''
-    PROD_CONTAINER    = ''
-    PROD_PG_CONTAINER = ''
-
-    REPO_HTTPS = ''
-    GIT_CRED_ID = ''
+    REPO_HTTP = 'http://atlassian.satnusa.com:7990/scm/dvo/n8n-cicd-workflows.git'
+    GIT_CRED_ID = 'bitbucket'
   }
 
   stages {
@@ -37,7 +37,7 @@ pipeline {
         }
       }
       steps {
-        input message: "Mode ${params.PIPELINE_MODE}: yakin lanjut promote 1 file workflow (wf/${env.WORKFLOW_ID}) ke main + deploy ke PROD?",
+        input message: "Mode ${params.PIPELINE_MODE}: yakin lanjut promote 1 file workflow (workflow/${env.WORKFLOW_ID}) ke master + deploy ke PROD?",
               ok: 'Approve & Continue',
               submitter: 'morax'
       }
@@ -46,9 +46,9 @@ pipeline {
     stage('Checkout required files only') {
       steps {
         checkout([$class: 'GitSCM',
-          branches: [[name: '*/main']],
+          branches: [[name: '*/master']],
           userRemoteConfigs: [[
-            url: "${REPO_HTTPS}",
+            url: "${REPO_HTTP}",
             credentialsId: "${GIT_CRED_ID}"
           ]],
           extensions: [
@@ -69,13 +69,20 @@ pipeline {
         }
       }
       steps {
+        withCredentials([usernamePassword(
+          credentialsId: "${GIT_CRED_ID}",
+          usernameVariable: 'GH_USER',
+          passwordVariable: 'GH_PASS'
+        )]) {
         sh '''
           set -e
-          git fetch origin main
+          git remote set-url origin "http://${GH_USER}:${GH_PASS}@atlassian.satnusa.com:7990/scm/dvo/n8n-cicd-workflows.git"
+          git fetch origin master
 
-          # selalu mulai dari origin/main agar script pipeline tersedia saat export
-          git checkout -B "wf/${WORKFLOW_ID}" origin/main
+          # selalu mulai dari origin/master agar script pipeline tersedia saat export
+          git checkout -B "workflow/${WORKFLOW_ID}" origin/master
         '''
+        }
       }
     }
 
@@ -107,18 +114,24 @@ pipeline {
         }
       }
       steps {
+        script{
+          wrap([$class: 'BuildUser']) {
+            env.authorName = env.BUILD_USER ?: 'Unknown'
+            env.authorEmail = env.BUILD_USER_EMAIL ?: 'no-reply@example.com'
+          }
+        }
         withCredentials([usernamePassword(
           credentialsId: "${GIT_CRED_ID}",
           usernameVariable: 'GH_USER',
-          passwordVariable: 'GH_PAT'
+          passwordVariable: 'GH_PASS'
         )]) {
           sh '''
             set -e
             set +x
 
             git status
-            git config user.email "jenkins@local"
-            git config user.name  "jenkins"
+            git config user.email "${authorEmail}"
+            git config user.name  "${authorName}"
 
             # branch workflow ini hanya berisi folder workflows + 1 file workflow target
             find . -mindepth 1 -maxdepth 1 ! -name '.git' ! -name 'workflows' -exec rm -rf {} +
@@ -131,47 +144,53 @@ pipeline {
               git commit -m "export workflow ${WORKFLOW_ID} from dev"
             fi
 
-            git remote set-url origin "https://${GH_USER}:${GH_PAT}@github.com/Wrianzz/jenkins-n8n.git"
-            if git ls-remote --exit-code --heads origin "wf/${WORKFLOW_ID}" >/dev/null 2>&1; then
-              git push --force-with-lease origin HEAD:"wf/${WORKFLOW_ID}"
+            git remote set-url origin "http://${GH_USER}:${GH_PASS}@atlassian.satnusa.com:7990/scm/dvo/n8n-cicd-workflows.git"
+            if git ls-remote --exit-code --heads origin "workflow/${WORKFLOW_ID}" >/dev/null 2>&1; then
+              git push --force-with-lease origin HEAD:"workflow/${WORKFLOW_ID}"
             else
-              git push origin HEAD:"wf/${WORKFLOW_ID}"
+              git push origin HEAD:"workflow/${WORKFLOW_ID}"
             fi
           '''
         }
       }
     }
 
-    stage('Promote workflow file to main only') {
+    stage('Promote workflow file to master only') {
       when {
         expression {
           params.PIPELINE_MODE in ['REPO_TO_PROD', 'DEV_TO_PROD']
         }
       }
       steps {
+        script{
+          wrap([$class: 'BuildUser']) {
+            env.authorName = env.BUILD_USER ?: 'Unknown'
+            env.authorEmail = env.BUILD_USER_EMAIL ?: 'no-reply@example.com'
+          }
+        }
         withCredentials([usernamePassword(
           credentialsId: "${GIT_CRED_ID}",
           usernameVariable: 'GH_USER',
-          passwordVariable: 'GH_PAT'
+          passwordVariable: 'GH_PASS'
         )]) {
           sh '''
             set -e
             set +x
 
-            git config user.email "jenkins@local"
-            git config user.name  "jenkins"
-            git remote set-url origin "https://${GH_USER}:${GH_PAT}@github.com/Wrianzz/jenkins-n8n.git"
+            git config user.email "${authorEmail}"
+            git config user.name  "${authorName}"
+            git remote set-url origin "http://${GH_USER}:${GH_PASS}@atlassian.satnusa.com:7990/scm/dvo/n8n-cicd-workflows.git"
 
-            git fetch origin main "wf/${WORKFLOW_ID}"
-            git checkout -B main origin/main
-            git checkout "origin/wf/${WORKFLOW_ID}" -- "workflows/${WORKFLOW_ID}.json"
+            git fetch origin master "workflow/${WORKFLOW_ID}"
+            git checkout -B master origin/master
+            git checkout "origin/workflow/${WORKFLOW_ID}" -- "workflows/${WORKFLOW_ID}.json"
 
             if git diff --quiet HEAD -- "workflows/${WORKFLOW_ID}.json"; then
-              echo "[INFO] workflows/${WORKFLOW_ID}.json already up to date in main"
+              echo "[INFO] workflows/${WORKFLOW_ID}.json already up to date in master"
             else
               git add "workflows/${WORKFLOW_ID}.json"
-              git commit -m "promote workflow ${WORKFLOW_ID} from wf branch to main"
-              git push origin HEAD:main
+              git commit -m "promote workflow ${WORKFLOW_ID} from workflow branch to master"
+              git push origin HEAD:master
             fi
           '''
         }
