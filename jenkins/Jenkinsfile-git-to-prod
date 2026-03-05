@@ -1,3 +1,9 @@
+def guardOps
+
+def gitOps
+
+def deployOps
+
 pipeline {
   agent any
 
@@ -11,7 +17,7 @@ pipeline {
 
   environment {
     WORKFLOW_ID = '0dC7cf1RWepnziH2'
-    
+
     SSH_CRED_ID  = 'n8n-cross-server-ssh'
     DEV_SSH_HOST = '192.168.56.52'
     DEV_SSH_USER = 'jenkins'
@@ -27,9 +33,20 @@ pipeline {
 
     REPO_HTTP = 'http://atlassian.satnusa.com:7990/scm/dvo/n8n-cicd-workflows.git'
     GIT_CRED_ID = 'bitbucket'
+    APPROVER = 'morax'
   }
 
   stages {
+    stage('Load shared library objects') {
+      steps {
+        script {
+          guardOps = load 'jenkins/lib/PipelineGuard.groovy'
+          gitOps = load 'jenkins/lib/GitWorkflowOps.groovy'
+          deployOps = load 'jenkins/lib/DeploymentOps.groovy'
+        }
+      }
+    }
+
     stage('Approval') {
       when {
         expression {
@@ -37,28 +54,17 @@ pipeline {
         }
       }
       steps {
-        input message: "Mode ${params.PIPELINE_MODE}: yakin lanjut promote 1 file workflow (workflow/${env.WORKFLOW_ID}) ke master + deploy ke PROD?",
-              ok: 'Approve & Continue',
-              submitter: 'morax'
+        script {
+          guardOps.requestApproval(params.PIPELINE_MODE, env.WORKFLOW_ID, env.APPROVER)
+        }
       }
     }
 
     stage('Checkout required files only') {
       steps {
-        checkout([$class: 'GitSCM',
-          branches: [[name: '*/master']],
-          userRemoteConfigs: [[
-            url: "${REPO_HTTP}",
-            credentialsId: "${GIT_CRED_ID}"
-          ]],
-          extensions: [
-            [$class: 'SparseCheckoutPaths', sparseCheckoutPaths: [
-              [path: 'scripts/'],
-              [path: 'workflows/'],
-              [path: 'jenkins/']
-            ]]
-          ]
-        ])
+        script {
+          gitOps.checkoutRequiredFiles(env.REPO_HTTP, env.GIT_CRED_ID)
+        }
       }
     }
 
@@ -69,19 +75,8 @@ pipeline {
         }
       }
       steps {
-        withCredentials([usernamePassword(
-          credentialsId: "${GIT_CRED_ID}",
-          usernameVariable: 'GH_USER',
-          passwordVariable: 'GH_PASS'
-        )]) {
-        sh '''
-          set -e
-          git remote set-url origin "http://${GH_USER}:${GH_PASS}@atlassian.satnusa.com:7990/scm/dvo/n8n-cicd-workflows.git"
-          git fetch origin master
-
-          # selalu mulai dari origin/master agar script pipeline tersedia saat export
-          git checkout -B "workflow/${WORKFLOW_ID}" origin/master
-        '''
+        script {
+          gitOps.prepareWorkflowBranch(env.GIT_CRED_ID, env.WORKFLOW_ID)
         }
       }
     }
@@ -93,16 +88,8 @@ pipeline {
         }
       }
       steps {
-        withCredentials([sshUserPrivateKey(
-          credentialsId: "${SSH_CRED_ID}",
-          keyFileVariable: 'SSH_KEY_FILE'
-        )]) {
-          sh '''
-            set -e
-            chmod +x scripts/export-to-git.sh
-            export SSH_KEY_FILE
-            scripts/export-to-git.sh "$WORKFLOW_ID"
-          '''
+        script {
+          deployOps.exportWorkflowFromDev(env.SSH_CRED_ID, env.WORKFLOW_ID)
         }
       }
     }
@@ -114,43 +101,12 @@ pipeline {
         }
       }
       steps {
-        script{
+        script {
           wrap([$class: 'BuildUser']) {
             env.authorName = env.BUILD_USER ?: 'Unknown'
             env.authorEmail = env.BUILD_USER_EMAIL ?: 'no-reply@example.com'
           }
-        }
-        withCredentials([usernamePassword(
-          credentialsId: "${GIT_CRED_ID}",
-          usernameVariable: 'GH_USER',
-          passwordVariable: 'GH_PASS'
-        )]) {
-          sh '''
-            set -e
-            set +x
-
-            git status
-            git config user.email "${authorEmail}"
-            git config user.name  "${authorName}"
-
-            # branch workflow ini hanya berisi folder workflows + 1 file workflow target
-            find . -mindepth 1 -maxdepth 1 ! -name '.git' ! -name 'workflows' -exec rm -rf {} +
-            find workflows -maxdepth 1 -type f -name '*.json' ! -name "${WORKFLOW_ID}.json" -delete || true
-
-            git add -A .
-            if git diff --cached --quiet; then
-              echo "[INFO] No changes to commit for workflows/${WORKFLOW_ID}.json"
-            else
-              git commit -m "export workflow ${WORKFLOW_ID} from dev"
-            fi
-
-            git remote set-url origin "http://${GH_USER}:${GH_PASS}@atlassian.satnusa.com:7990/scm/dvo/n8n-cicd-workflows.git"
-            if git ls-remote --exit-code --heads origin "workflow/${WORKFLOW_ID}" >/dev/null 2>&1; then
-              git push --force-with-lease origin HEAD:"workflow/${WORKFLOW_ID}"
-            else
-              git push origin HEAD:"workflow/${WORKFLOW_ID}"
-            fi
-          '''
+          gitOps.commitAndPushWorkflowOnly(env.GIT_CRED_ID, env.WORKFLOW_ID, env.authorName, env.authorEmail)
         }
       }
     }
@@ -162,37 +118,12 @@ pipeline {
         }
       }
       steps {
-        script{
+        script {
           wrap([$class: 'BuildUser']) {
             env.authorName = env.BUILD_USER ?: 'Unknown'
             env.authorEmail = env.BUILD_USER_EMAIL ?: 'no-reply@example.com'
           }
-        }
-        withCredentials([usernamePassword(
-          credentialsId: "${GIT_CRED_ID}",
-          usernameVariable: 'GH_USER',
-          passwordVariable: 'GH_PASS'
-        )]) {
-          sh '''
-            set -e
-            set +x
-
-            git config user.email "${authorEmail}"
-            git config user.name  "${authorName}"
-            git remote set-url origin "http://${GH_USER}:${GH_PASS}@atlassian.satnusa.com:7990/scm/dvo/n8n-cicd-workflows.git"
-
-            git fetch origin master "workflow/${WORKFLOW_ID}"
-            git checkout -B master origin/master
-            git checkout "origin/workflow/${WORKFLOW_ID}" -- "workflows/${WORKFLOW_ID}.json"
-
-            if git diff --quiet HEAD -- "workflows/${WORKFLOW_ID}.json"; then
-              echo "[INFO] workflows/${WORKFLOW_ID}.json already up to date in master"
-            else
-              git add "workflows/${WORKFLOW_ID}.json"
-              git commit -m "promote workflow ${WORKFLOW_ID} from workflow branch to master"
-              git push origin HEAD:master
-            fi
-          '''
+          gitOps.promoteWorkflowToMaster(env.GIT_CRED_ID, env.WORKFLOW_ID, env.authorName, env.authorEmail)
         }
       }
     }
@@ -204,24 +135,9 @@ pipeline {
         }
       }
       steps {
-        withCredentials([sshUserPrivateKey(
-          credentialsId: "${SSH_CRED_ID}",
-          keyFileVariable: 'SSH_KEY_FILE'
-        )]) {
-          sh '''
-            set -e
-            chmod +x scripts/deploy-from-git.sh scripts/promote-creds.sh
-            export SSH_KEY_FILE
-            scripts/deploy-from-git.sh "$WORKFLOW_ID"
-          '''
+        script {
+          deployOps.deployFromRepoToProd(env.SSH_CRED_ID, env.WORKFLOW_ID)
         }
-      }
-    }
-  }
-  post{
-    always{
-      script{
-        cleanWs()
       }
     }
   }
