@@ -55,9 +55,9 @@ count=0
 for CID in $CRED_IDS; do
   [[ -z "${CID:-}" ]] && continue
   ssh "${DEV_SSH_OPTS[@]}" "$DEV_REMOTE" \
-    "docker exec '$DEV_CONTAINER' n8n export:credentials --id '$CID' --output /tmp/cred_${CID}.json"
+    "docker exec -u 0 '$DEV_CONTAINER' n8n export:credentials --id '$CID' --decrypted --output /cred_${CID}.json"
   ssh "${DEV_SSH_OPTS[@]}" "$DEV_REMOTE" \
-    "docker exec '$DEV_CONTAINER' cat /tmp/cred_${CID}.json" > "${CREDS_DIR}/cred_${CID}.json"
+    "docker exec -u 0 '$DEV_CONTAINER' cat /tmp/cred_${CID}.json" > "${CREDS_DIR}/cred_${CID}.json"
   count=$((count+1))
 done
 [[ "$count" -gt 0 ]] || { echo "[ERR] No credential IDs provided after normalization."; exit 1; }
@@ -73,9 +73,9 @@ for CID in $CRED_IDS; do
 done
 
 ssh "${PROD_SSH_OPTS[@]}" "$PROD_REMOTE" \
-  "rm -rf /tmp/n8n-promote-creds-${RUN_ID}; docker exec '$PROD_CONTAINER' sh -lc 'rm -rf /tmp/n8n-promote-creds-${RUN_ID} /tmp/cred_*.json || true'"
+  "rm -rf /tmp/n8n-promote-creds-${RUN_ID}; docker exec -u 0 '$PROD_CONTAINER' sh -lc 'rm -rf /tmp/n8n-promote-creds-${RUN_ID} /tmp/cred_*.json || true'"
 ssh "${DEV_SSH_OPTS[@]}" "$DEV_REMOTE" \
-  "docker exec '$DEV_CONTAINER' sh -lc 'rm -f /tmp/cred_*.json || true'"
+  "docker exec -u 0 '$DEV_CONTAINER' sh -lc 'rm -f /tmp/cred_*.json || true'"
 rm -rf "$TMP_DIR"
 
 echo "[OK] Promote credentials selesai"
