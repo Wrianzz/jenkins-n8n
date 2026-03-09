@@ -7,6 +7,8 @@ DEV_SSH_HOST="${DEV_SSH_HOST:?DEV_SSH_HOST is required}"
 DEV_SSH_USER="${DEV_SSH_USER:-}"
 DEV_SSH_PORT="${DEV_SSH_PORT:-22}"
 DEV_CONTAINER="${DEV_CONTAINER:-n8n-dev-n8n-dev-1}"
+DEV_PG_CONTAINER="${DEV_PG_CONTAINER:-n8n-postgres-dev-1}"
+DEV_PROJECT_ID="${DEV_PROJECT_ID:-}"
 
 PROD_SSH_HOST="${PROD_SSH_HOST:?PROD_SSH_HOST is required}"
 PROD_SSH_USER="${PROD_SSH_USER:-}"
@@ -32,12 +34,15 @@ fi
 
 CRED_IDS="$(echo "$CRED_IDS_RAW" | tr ',' ' ' | xargs)"
 
-get_prod_project_id() {
+get_project_id() {
+  local remote="$1"
+  local -n ssh_opts_ref=$2
+  local pg_container="$3"
   local pid
-  pid="$(ssh "${PROD_SSH_OPTS[@]}" "$PROD_REMOTE" \
-    "docker exec '$PROD_PG_CONTAINER' psql -U n8n -d n8n -tA -c \"select id from project order by \\\"createdAt\\\" asc limit 1;\"" \
+  pid="$(ssh "${ssh_opts_ref[@]}" "$remote" \
+    "docker exec '$pg_container' psql -U n8n -d n8n -tA -c \"select id from project order by \\\"createdAt\\\" asc limit 1;\"" \
     | tr -d '\r' | xargs || true)"
-  [[ -n "$pid" ]] || { echo "[ERR] Cannot determine PROD projectId"; exit 1; }
+  [[ -n "$pid" ]] || { echo "[ERR] Cannot determine projectId on $remote"; exit 1; }
   echo "$pid"
 }
 
@@ -48,14 +53,30 @@ share_credential_to_project() {
     "docker exec '$PROD_PG_CONTAINER' psql -U n8n -d n8n -tA -c \"insert into shared_credentials(\\\"credentialsId\\\",\\\"projectId\\\",\\\"role\\\") values ('$cid','$pid','credential:owner') on conflict do nothing;\"" >/dev/null
 }
 
+export_credential_from_dev() {
+  local cid="$1"
+  local dev_project_id="$2"
+
+  if ssh "${DEV_SSH_OPTS[@]}" "$DEV_REMOTE" \
+    "docker exec '$DEV_CONTAINER' n8n export:credentials --id '$cid' --projectId '$dev_project_id' --decrypted --output /tmp/cred_${cid}.json"; then
+    return 0
+  fi
+
+  echo "[WARN] Export with --projectId failed for credential $cid, retrying without --projectId"
+  ssh "${DEV_SSH_OPTS[@]}" "$DEV_REMOTE" \
+    "docker exec '$DEV_CONTAINER' n8n export:credentials --id '$cid' --decrypted --output /tmp/cred_${cid}.json"
+}
+
 mkdir -p "$CREDS_DIR"
-PROD_PROJECT_ID="$(get_prod_project_id)"
+PROD_PROJECT_ID="$(get_project_id "$PROD_REMOTE" PROD_SSH_OPTS "$PROD_PG_CONTAINER")"
+if [[ -z "$DEV_PROJECT_ID" ]]; then
+  DEV_PROJECT_ID="$(get_project_id "$DEV_REMOTE" DEV_SSH_OPTS "$DEV_PG_CONTAINER")"
+fi
 
 count=0
 for CID in $CRED_IDS; do
   [[ -z "${CID:-}" ]] && continue
-  ssh "${DEV_SSH_OPTS[@]}" "$DEV_REMOTE" \
-    "docker exec '$DEV_CONTAINER' n8n export:credentials --id '$CID' --output /tmp/cred_${CID}.json"
+  export_credential_from_dev "$CID" "$DEV_PROJECT_ID"
   ssh "${DEV_SSH_OPTS[@]}" "$DEV_REMOTE" \
     "docker exec '$DEV_CONTAINER' cat /tmp/cred_${CID}.json" > "${CREDS_DIR}/cred_${CID}.json"
   count=$((count+1))
@@ -65,7 +86,7 @@ done
 ssh "${PROD_SSH_OPTS[@]}" "$PROD_REMOTE" "mkdir -p '/tmp/n8n-promote-creds-${RUN_ID}'"
 scp "${PROD_SCP_OPTS[@]}" "${CREDS_DIR}"/*.json "$PROD_REMOTE:/tmp/n8n-promote-creds-${RUN_ID}/"
 ssh "${PROD_SSH_OPTS[@]}" "$PROD_REMOTE" \
-  "docker cp /tmp/n8n-promote-creds-${RUN_ID} '$PROD_CONTAINER:/tmp/n8n-promote-creds-${RUN_ID}' && docker exec '$PROD_CONTAINER' n8n import:credentials --separate --input /tmp/n8n-promote-creds-${RUN_ID} --projectId '$PROD_PROJECT_ID' || true"
+  "docker cp /tmp/n8n-promote-creds-${RUN_ID} '$PROD_CONTAINER:/tmp/n8n-promote-creds-${RUN_ID}' && docker exec '$PROD_CONTAINER' n8n import:credentials --separate --input /tmp/n8n-promote-creds-${RUN_ID} --projectId '$PROD_PROJECT_ID'"
 
 for CID in $CRED_IDS; do
   [[ -z "${CID:-}" ]] && continue

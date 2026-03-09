@@ -28,6 +28,7 @@ pipeline {
     PROD_SSH_PORT = '22'
 
     DEV_CONTAINER     = 'n8n-n8n-dev-1'
+    DEV_PG_CONTAINER  = 'n8n-postgres-dev-1'
     PROD_CONTAINER    = 'n8n-n8n-prod-1'
     PROD_PG_CONTAINER = 'n8n-postgres-prod-1'
 
