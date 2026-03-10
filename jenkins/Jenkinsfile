@@ -1,0 +1,195 @@
+def lib = library(
+  identifier: 'cicd-n8n-library@master', 
+  retriever: modernSCM([
+    $class: 'GitSCMSource',
+    remote: 'http://atlassian.satnusa.com:7990/scm/jsl/cicd-n8n-library.git', 
+    credentialsId: 'bitbucket-account'
+  ])
+)
+
+pipeline {
+  agent any
+
+  parameters {
+    choice(
+      name: 'PIPELINE_MODE',
+      choices: ['DEV_TO_REPO', 'REPO_TO_PROD', 'DEV_TO_PROD'],
+      description: 'Pilih mode pipeline: DEV_TO_REPO | REPO_TO_PROD | DEV_TO_PROD'
+    )
+  }
+
+  environment {
+    WORKFLOW_ID = ''
+
+    SSH_CRED_ID  = 'n8n-cross-server-ssh'
+    DEV_SSH_HOST = '192.168.xx.xx'
+    DEV_SSH_USER = 'jenkins'
+    DEV_SSH_PORT = '22'
+
+    PROD_SSH_HOST = '192.168.xx.xx'
+    PROD_SSH_USER = 'jenkins'
+    PROD_SSH_PORT = '22'
+
+    DEV_CONTAINER     = 'n8n-compose'
+    PROD_CONTAINER    = 'n8n-compose'
+    PROD_PG_CONTAINER = 'n8n-compose'
+
+    REPO_HTTP = 'http://repo.com'
+    GIT_CRED_ID = 'bitbucket-account'
+
+    APPROVER = 'approver1, approver2, approver3'
+    APPROVER_EMAIL = 'approver1email, approver2email, approver3email'
+  }
+
+  stages {
+    stage('Setup Build User Info') {
+      steps {
+        script {
+          wrap([$class: 'BuildUser']) {
+            env.authorName = env.BUILD_USER ?: 'Unknown'
+            env.authorEmail = env.BUILD_USER_EMAIL ?: 'no-reply@example.com'
+          }
+        }
+      }
+    }
+
+    stage('Approval') {
+      when {
+        expression {
+          params.PIPELINE_MODE in ['REPO_TO_PROD', 'DEV_TO_PROD']
+        }
+      }
+      steps {
+        script {
+          def approvalInfo = PipelineGuard.requestTwoApprovals(
+            params.PIPELINE_MODE,
+            env.WORKFLOW_ID,
+            env.APPROVER,
+            env.APPROVER_EMAIL
+          )
+
+          env.FIRST_APPROVER  = approvalInfo.firstApprover ?: ''
+          env.SECOND_APPROVER = approvalInfo.secondApprover ?: ''
+          echo "Approval completed. Level 1: ${env.FIRST_APPROVER}, Level 2: ${env.SECOND_APPROVER}"
+        }
+      }
+    }
+
+    stage('Checkout required files only') {
+      steps {
+        script {
+          GitWorkflowOps.checkoutRequiredFiles(env.REPO_HTTP, env.GIT_CRED_ID)
+        }
+      }
+    }
+
+    stage('Prepare workflow branch') {
+      when {
+        expression { params.PIPELINE_MODE in ['DEV_TO_REPO', 'DEV_TO_PROD'] }
+      }
+      steps {
+        script {
+          GitWorkflowOps.prepareWorkflowBranch(env.GIT_CRED_ID, env.WORKFLOW_ID)
+        }
+      }
+    }
+
+    stage('Dev -> Repo (export)') {
+      when {
+        expression { params.PIPELINE_MODE in ['DEV_TO_REPO', 'DEV_TO_PROD'] }
+      }
+      steps {
+        script {
+          DeploymentOps.exportWorkflowFromDev(env.SSH_CRED_ID, env.WORKFLOW_ID)
+        }
+      }
+    }
+
+    stage('Commit & push workflow file only') {
+      when {
+        expression { params.PIPELINE_MODE in ['DEV_TO_REPO', 'DEV_TO_PROD'] }
+      }
+      steps {
+        script {
+          GitWorkflowOps.commitAndPushWorkflowOnly(
+            env.GIT_CRED_ID,
+            env.WORKFLOW_ID,
+            env.authorName,
+            env.authorEmail
+          )
+        }
+      }
+    }
+
+    stage('Promote workflow file to master only') {
+      when {
+        expression { params.PIPELINE_MODE in ['REPO_TO_PROD', 'DEV_TO_PROD'] }
+      }
+      steps {
+        script {
+          GitWorkflowOps.promoteWorkflowToMaster(
+            env.GIT_CRED_ID,
+            env.WORKFLOW_ID,
+            env.authorName,
+            env.authorEmail
+          )
+        }
+      }
+    }
+
+    stage('Repo -> Prod (promote creds + deploy)') {
+      when {
+        expression { params.PIPELINE_MODE in ['REPO_TO_PROD', 'DEV_TO_PROD'] }
+      }
+      steps {
+        script {
+          DeploymentOps.deployFromRepoToProd(env.SSH_CRED_ID, env.WORKFLOW_ID)
+        }
+      }
+    }
+  }
+
+  post {
+    success {
+      script {
+        sendEmailTemplate(
+          MAILMODE: 'POST_BUILD_REPORT',
+          EXTRA_DATA: [
+            buildResult: 'SUCCESS',
+            firstApprover: env.FIRST_APPROVER,
+            secondApprover: env.SECOND_APPROVER
+          ]
+        )
+      }
+    }
+    failure {
+      script {
+        sendEmailTemplate(
+          MAILMODE: 'POST_BUILD_REPORT',
+          EXTRA_DATA: [
+            buildResult: 'FAILURE',
+            firstApprover: env.FIRST_APPROVER,
+            secondApprover: env.SECOND_APPROVER
+          ]
+        )
+      }
+    }
+    aborted {
+      script {
+        sendEmailTemplate(
+          MAILMODE: 'POST_BUILD_REPORT',
+          EXTRA_DATA: [
+            buildResult: 'ABORTED',
+            firstApprover: env.FIRST_APPROVER,
+            secondApprover: env.SECOND_APPROVER
+          ]
+        )
+      }
+    }
+    always {
+      script {
+        cleanWs()
+      }
+    }
+  }
+}
