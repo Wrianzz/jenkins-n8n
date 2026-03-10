@@ -54,18 +54,24 @@ PROD_PROJECT_ID="$(get_prod_project_id)"
 count=0
 for CID in $CRED_IDS; do
   [[ -z "${CID:-}" ]] && continue
+  echo "[DEV] Exporting..."
   ssh "${DEV_SSH_OPTS[@]}" "$DEV_REMOTE" \
-    "docker exec -u 0 '$DEV_CONTAINER' n8n export:credentials --id '$CID' --decrypted --output /cred_${CID}.json"
+    "docker exec '$DEV_CONTAINER' n8n export:credentials --id '$CID' --decrypted --output /tmp/cred_${CID}.json"
+  echo "[DEV] Moving..."
   ssh "${DEV_SSH_OPTS[@]}" "$DEV_REMOTE" \
-    "docker exec -u 0 '$DEV_CONTAINER' cat /tmp/cred_${CID}.json" > "${CREDS_DIR}/cred_${CID}.json"
+    "docker exec '$DEV_CONTAINER' cat /tmp/cred_${CID}.json" > "${CREDS_DIR}/cred_${CID}.json"
   count=$((count+1))
 done
 [[ "$count" -gt 0 ]] || { echo "[ERR] No credential IDs provided after normalization."; exit 1; }
 
+echo "[PROD] Create tmp..."
 ssh "${PROD_SSH_OPTS[@]}" "$PROD_REMOTE" "mkdir -p '/tmp/n8n-promote-creds-${RUN_ID}'"
+echo "[PROD] Move from dev to prod..."
 scp "${PROD_SCP_OPTS[@]}" "${CREDS_DIR}"/*.json "$PROD_REMOTE:/tmp/n8n-promote-creds-${RUN_ID}/"
+echo "[PROD] Importing..."
 ssh "${PROD_SSH_OPTS[@]}" "$PROD_REMOTE" \
-  "docker cp /tmp/n8n-promote-creds-${RUN_ID} '$PROD_CONTAINER:/tmp/n8n-promote-creds-${RUN_ID}' && docker exec '$PROD_CONTAINER' n8n import:credentials --separate --input /tmp/n8n-promote-creds-${RUN_ID} --projectId '$PROD_PROJECT_ID' || true"
+  "docker cp /tmp/n8n-promote-creds-${RUN_ID} '$PROD_CONTAINER:/tmp/n8n-promote-creds-${RUN_ID}' && \
+   docker exec '$PROD_CONTAINER' sh -c 'for file in /tmp/n8n-promote-creds-${RUN_ID}/*.json; do n8n import:credentials --input \"\$file\" --projectId \"$PROD_PROJECT_ID\"; done'"
 
 for CID in $CRED_IDS; do
   [[ -z "${CID:-}" ]] && continue
