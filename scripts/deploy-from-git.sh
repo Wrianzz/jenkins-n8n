@@ -42,10 +42,10 @@ fi
 [[ -f "$EXTRACT_FILTER" ]] || { echo "[ERR] jq filter not found: $EXTRACT_FILTER"; exit 1; }
 [[ -x "$PROMOTE_SCRIPT" ]] || { echo "[ERR] promote script not executable: $PROMOTE_SCRIPT"; exit 1; }
 
-WORKFLOW_ID="$(jq -r '.id // empty' "$WF_FILE")"
+WORKFLOW_ID="$(jq -r 'if type == "array" then .[0].id // empty else .id // empty end' "$WF_FILE")"
 [[ -n "$WORKFLOW_ID" ]] || { echo "[ERR] Workflow id not found in file: $WF_FILE"; exit 1; }
 
-SOURCE_ACTIVE="$(jq -r '.active // false' "$WF_FILE")"
+SOURCE_ACTIVE="$(jq -r 'if type == "array" then .[0].active // false else .active // false end' "$WF_FILE")"
 PROD_ACTIVE_RAW="$(ssh "${PROD_SSH_OPTS[@]}" "$PROD_REMOTE" \
   "docker exec '$PROD_PG_CONTAINER' psql -U n8n -d n8n -tA -c \"select active from workflow_entity where id='${WORKFLOW_ID}' limit 1;\"" | tr -d '\r' | xargs || true)"
 
