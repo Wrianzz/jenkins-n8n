@@ -42,6 +42,31 @@ fi
 [[ -f "$EXTRACT_FILTER" ]] || { echo "[ERR] jq filter not found: $EXTRACT_FILTER"; exit 1; }
 [[ -x "$PROMOTE_SCRIPT" ]] || { echo "[ERR] promote script not executable: $PROMOTE_SCRIPT"; exit 1; }
 
+WORKFLOW_ID="$(jq -r 'if type == "array" then .[0].id // empty else .id // empty end' "$WF_FILE")"
+[[ -n "$WORKFLOW_ID" ]] || { echo "[ERR] Workflow id not found in file: $WF_FILE"; exit 1; }
+
+SOURCE_ACTIVE="$(jq -r 'if type == "array" then .[0].active // false else .active // false end' "$WF_FILE")"
+PROD_ACTIVE_RAW="$(ssh "${PROD_SSH_OPTS[@]}" "$PROD_REMOTE" \
+  "docker exec '$PROD_PG_CONTAINER' psql -U n8n -d n8n -tA -c \"select active from workflow_entity where id='${WORKFLOW_ID}' limit 1;\"" | tr -d '\r' | xargs || true)"
+
+WF_FILE_TO_IMPORT="$WF_FILE"
+TMP_IMPORT_FILE=""
+if [[ "$PROD_ACTIVE_RAW" == "t" || "$PROD_ACTIVE_RAW" == "true" ]]; then
+  if [[ "$SOURCE_ACTIVE" != "true" ]]; then
+    TMP_IMPORT_FILE="$(mktemp "${TMPDIR:-/tmp}/wf-import-${WORKFLOW_ID}.XXXXXX.json")"
+    jq '.active = true' "$WF_FILE" > "$TMP_IMPORT_FILE"
+    WF_FILE_TO_IMPORT="$TMP_IMPORT_FILE"
+    echo "[INFO] Workflow aktif di PROD, pakai active=true saat import agar tetap aktif"
+  fi
+fi
+
+chmod a+r "$WF_FILE_TO_IMPORT"
+
+cleanup() {
+  [[ -n "$TMP_IMPORT_FILE" && -f "$TMP_IMPORT_FILE" ]] && rm -f "$TMP_IMPORT_FILE"
+}
+trap cleanup EXIT
+
 base="$(basename "$WF_FILE")"
 remote_host_file="/tmp/${base}"
 remote_container_file="/tmp/${base}"
@@ -59,7 +84,7 @@ else
 fi
 
 echo "[2] Transfer and import workflow to PROD"
-scp "${PROD_SCP_OPTS[@]}" "$WF_FILE" "$PROD_REMOTE:$remote_host_file"
+scp "${PROD_SCP_OPTS[@]}" "$WF_FILE_TO_IMPORT" "$PROD_REMOTE:$remote_host_file"
 ssh "${PROD_SSH_OPTS[@]}" "$PROD_REMOTE" \
   "docker cp '$remote_host_file' '$PROD_CONTAINER:$remote_container_file' && docker exec '$PROD_CONTAINER' n8n import:workflow --input '$remote_container_file' --projectId '$PROD_PROJECT_ID'"
 ssh "${PROD_SSH_OPTS[@]}" "$PROD_REMOTE" \
