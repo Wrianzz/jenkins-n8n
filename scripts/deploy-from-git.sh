@@ -60,6 +60,8 @@ if [[ "$PROD_ACTIVE_RAW" == "t" || "$PROD_ACTIVE_RAW" == "true" ]]; then
   fi
 fi
 
+chmod a+r "$WF_FILE_TO_IMPORT"
+
 cleanup() {
   [[ -n "$TMP_IMPORT_FILE" && -f "$TMP_IMPORT_FILE" ]] && rm -f "$TMP_IMPORT_FILE"
 }
