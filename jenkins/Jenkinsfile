@@ -3,7 +3,7 @@ def lib = library(
   retriever: modernSCM([
     $class: 'GitSCMSource',
     remote: 'http://atlassian.satnusa.com:7990/scm/jsl/cicd-n8n-library.git', 
-    credentialsId: 'bitbucket-account'
+    credentialsId: 'bitbucket-satnusa-account'
   ])
 )
 
@@ -19,26 +19,26 @@ pipeline {
   }
 
   environment {
-    WORKFLOW_ID = ''
+    WORKFLOW_ID = 'r3klGovoZdClIgDd'
 
     SSH_CRED_ID  = 'n8n-cross-server-ssh'
-    DEV_SSH_HOST = '192.168.xx.xx'
+    DEV_SSH_HOST = '192.168.88.20'
     DEV_SSH_USER = 'jenkins'
     DEV_SSH_PORT = '22'
 
-    PROD_SSH_HOST = '192.168.xx.xx'
+    PROD_SSH_HOST = '192.168.88.82'
     PROD_SSH_USER = 'jenkins'
     PROD_SSH_PORT = '22'
 
-    DEV_CONTAINER     = 'n8n-compose'
-    PROD_CONTAINER    = 'n8n-compose'
-    PROD_PG_CONTAINER = 'n8n-compose'
+    DEV_CONTAINER     = 'n8n-compose-n8n-1'
+    PROD_CONTAINER    = 'n8n-compose-n8n-prod-1'
+    PROD_PG_CONTAINER = 'n8n-compose-postgres-prod-1'
 
-    REPO_HTTP = 'http://repo.com'
-    GIT_CRED_ID = 'bitbucket-account'
+    REPO_HTTP = 'http://atlassian.satnusa.com:7990/scm/dvo/n8n-cicd-workflows.git'
+    GIT_CRED_ID = 'bitbucket-satnusa-account'
 
-    APPROVER = 'approver1, approver2, approver3'
-    APPROVER_EMAIL = 'approver1email, approver2email, approver3email'
+    APPROVER = 'o.midiyanto, omidiyanto, fathur.morax'
+    APPROVER_EMAIL = 'o.midiyanto@satnusa.com, omidiyanto7@gmail.com, arthurwiriansyah@gmail.com'
   }
 
   stages {
