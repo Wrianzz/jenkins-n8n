@@ -42,23 +42,44 @@ fi
 [[ -f "$EXTRACT_FILTER" ]] || { echo "[ERR] jq filter not found: $EXTRACT_FILTER"; exit 1; }
 [[ -x "$PROMOTE_SCRIPT" ]] || { echo "[ERR] promote script not executable: $PROMOTE_SCRIPT"; exit 1; }
 
+echo "[0] Validate workflow credentials naming"
+INVALID_CREDENTIAL_NODES="$({
+  jq -r '
+    .nodes[]?
+    | select((.credentials? | type) == "object") as $node
+    | ($node.credentials | to_entries[]?) as $cred
+    | ($cred.value.name // "") as $credName
+    | select(($credName | test("-production$"; "i")) | not)
+    | "- node=\($node.name // "<unnamed>") credentialType=\($cred.key) credentialName=\($credName)"
+  ' "$WF_FILE"
+} || true)"
+
+if [[ -n "$INVALID_CREDENTIAL_NODES" ]]; then
+  echo "[ERR] Found non-production credential name(s)."
+  echo "[ERR] Every credential in workflow must use the format: <Nama-kredensial>-Production (case-insensitive)."
+  echo "$INVALID_CREDENTIAL_NODES"
+  exit 1
+fi
+
+echo "    OK: all node credentials already use suffix -Production (case-insensitive)."
+
 base="$(basename "$WF_FILE")"
 remote_host_file="/tmp/${base}"
 remote_container_file="/tmp/${base}"
 
-echo "[0] Scan credential IDs from workflow"
+echo "[1] Scan credential IDs from workflow"
 mapfile -t CRED_IDS < <(jq -r -f "$EXTRACT_FILTER" "$WF_FILE" | awk 'NF' | sort -u)
 
 if [[ "${#CRED_IDS[@]}" -gt 0 ]]; then
   CRED_IDS_RAW="${CRED_IDS[*]}"
   echo "    Found ${#CRED_IDS[@]} credential ID(s): ${CRED_IDS_RAW}"
-  echo "[1] Promote credentials to PROD"
+  echo "[2] Promote credentials to PROD"
   "$PROMOTE_SCRIPT" "$CRED_IDS_RAW"
 else
   echo "    No credential IDs found in workflow; skip promote creds"
 fi
 
-echo "[2] Transfer and import workflow to PROD"
+echo "[3] Transfer and import workflow to PROD"
 scp "${PROD_SCP_OPTS[@]}" "$WF_FILE" "$PROD_REMOTE:$remote_host_file"
 ssh "${PROD_SSH_OPTS[@]}" "$PROD_REMOTE" \
   "docker cp '$remote_host_file' '$PROD_CONTAINER:$remote_container_file' && docker exec '$PROD_CONTAINER' n8n import:workflow --input '$remote_container_file' --projectId '$PROD_PROJECT_ID'"
@@ -67,4 +88,4 @@ ssh "${PROD_SSH_OPTS[@]}" "$PROD_REMOTE" \
 ssh "${PROD_SSH_OPTS[@]}" "$PROD_REMOTE" \
   "rm -f '$remote_host_file'; docker exec '$PROD_CONTAINER' sh -lc 'rm -f \"$remote_container_file\" || true'"
 
-echo "[3] Done"
+echo "[4] Done"
