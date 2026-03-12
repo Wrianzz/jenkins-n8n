@@ -43,16 +43,21 @@ fi
 [[ -x "$PROMOTE_SCRIPT" ]] || { echo "[ERR] promote script not executable: $PROMOTE_SCRIPT"; exit 1; }
 
 echo "[0] Validate workflow credentials naming"
-INVALID_CREDENTIAL_NODES="$({
-  jq -r '
-    .nodes[]?
-    | select((.credentials? | type) == "object") as $node
-    | ($node.credentials | to_entries[]?) as $cred
-    | ($cred.value.name // "") as $credName
-    | select(($credName | test("-production$"; "i")) | not)
-    | "- node=\($node.name // "<unnamed>") credentialType=\($cred.key) credentialName=\($credName)"
-  ' "$WF_FILE"
-} || true)"
+if ! INVALID_CREDENTIAL_NODES="$(jq -r '
+  def workflow_objects:
+    if type == "array" then .[] else . end;
+
+  workflow_objects
+  | .nodes[]?
+  | select((.credentials? | type) == "object") as $node
+  | ($node.credentials | to_entries[]?) as $cred
+  | ($cred.value.name // "") as $credName
+  | select(($credName | test("-production$"; "i")) | not)
+  | "- node=\($node.name // "<unnamed>") credentialType=\($cred.key) credentialName=\($credName)"
+' "$WF_FILE")"; then
+  echo "[ERR] Failed to parse workflow JSON structure while validating credentials: $WF_FILE"
+  exit 1
+fi
 
 if [[ -n "$INVALID_CREDENTIAL_NODES" ]]; then
   echo "[ERR] Found non-production credential name(s)."
