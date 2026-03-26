@@ -83,6 +83,17 @@ pipeline {
       }
     }
 
+    stage('Validate non-production credentials') {
+      when {
+        expression { params.PIPELINE_MODE in ['REPO_TO_PROD', 'DEV_TO_PROD'] }
+      }
+      steps {
+        script {
+          DeploymentOps.validateWorkflowCredentialsOnly(env.SSH_CRED_ID, env.WORKFLOW_ID)
+        }
+      }
+    }
+
     stage('Commit & push workflow file only') {
       when {
         expression { params.PIPELINE_MODE in ['DEV_TO_REPO', 'DEV_TO_PROD'] }
@@ -95,17 +106,6 @@ pipeline {
             env.authorName,
             env.authorEmail
           )
-        }
-      }
-    }
-
-    stage('Validate non-production credentials') {
-      when {
-        expression { params.PIPELINE_MODE in ['REPO_TO_PROD', 'DEV_TO_PROD'] }
-      }
-      steps {
-        script {
-          DeploymentOps.validateWorkflowCredentialsOnly(env.SSH_CRED_ID, env.WORKFLOW_ID)
         }
       }
     }
