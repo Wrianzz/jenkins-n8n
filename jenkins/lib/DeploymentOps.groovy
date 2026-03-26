@@ -27,3 +27,17 @@ def deployFromRepoToProd(String sshCredId, String workflowId) {
     """
   }
 }
+
+def validateWorkflowCredentialsOnly(String sshCredId, String workflowId) {
+  withCredentials([sshUserPrivateKey(
+    credentialsId: sshCredId,
+    keyFileVariable: 'SSH_KEY_FILE'
+  )]) {
+    sh """
+      set -e
+      chmod +x scripts/deploy-from-git.sh
+      export SSH_KEY_FILE
+      scripts/deploy-from-git.sh --validate-only "${workflowId}"
+    """
+  }
+}
