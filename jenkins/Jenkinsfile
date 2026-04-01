@@ -100,18 +100,18 @@ pipeline {
       }
       steps {
         script {
-          GitWorkflowOps.prepareWorkflowBranch(env.GIT_CRED_ID, env.WORKFLOW_ID)
+          DeploymentOps.exportWorkflowFromDev(env.SSH_CRED_ID, env.WORKFLOW_ID)
         }
       }
     }
 
-    stage('Dev -> Repo (export)') {
+    stage('Validate non-production credentials') {
       when {
-        expression { params.PIPELINE_MODE in ['DEV_TO_REPO', 'DEV_TO_PROD'] }
+        expression { params.PIPELINE_MODE in ['REPO_TO_PROD', 'DEV_TO_PROD'] }
       }
       steps {
         script {
-          DeploymentOps.exportWorkflowFromDev(env.SSH_CRED_ID, env.WORKFLOW_ID)
+          DeploymentOps.validateWorkflowCredentialsOnly(env.SSH_CRED_ID, env.WORKFLOW_ID)
         }
       }
     }
@@ -128,6 +128,28 @@ pipeline {
             env.authorName,
             env.authorEmail
           )
+        }
+      }
+    }
+
+    stage('Approval') {
+      when {
+        expression {
+          params.PIPELINE_MODE in ['REPO_TO_PROD', 'DEV_TO_PROD']
+        }
+      }
+      steps {
+        script {
+          def approvalInfo = PipelineGuard.requestTwoApprovals(
+            params.PIPELINE_MODE,
+            env.WORKFLOW_ID,
+            env.APPROVER,
+            env.APPROVER_EMAIL
+          )
+
+          env.FIRST_APPROVER  = approvalInfo.firstApprover ?: ''
+          env.SECOND_APPROVER = approvalInfo.secondApprover ?: ''
+          echo "Approval completed. Level 1: ${env.FIRST_APPROVER}, Level 2: ${env.SECOND_APPROVER}"
         }
       }
     }
