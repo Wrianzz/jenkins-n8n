@@ -35,9 +35,9 @@ def validateWorkflowCredentialsOnly(String sshCredId, String workflowId) {
   )]) {
     sh """
       set -e
-      chmod +x scripts/deploy-from-git.sh
+      chmod +x scripts/export-to-git.sh scripts/validate-dev-credentials.sh
       export SSH_KEY_FILE
-      scripts/deploy-from-git.sh --validate-only "${workflowId}"
+      scripts/validate-dev-credentials.sh "${workflowId}"
     """
   }
 }

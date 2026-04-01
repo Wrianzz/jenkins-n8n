@@ -61,9 +61,9 @@ pipeline {
       }
     }
 
-    stage('Validate non-production credentials') {
+    stage('Validate non-production credentials (pre-approval)') {
       when {
-        expression { params.PIPELINE_MODE in ['REPO_TO_PROD', 'DEV_TO_PROD'] }
+        expression { params.PIPELINE_MODE == 'DEV_TO_PROD' }
       }
       steps {
         script {
@@ -72,7 +72,7 @@ pipeline {
       }
     }
 
-    stage('Approval') {
+    stage('Approval (pre-dev->repo)') {
       when {
         expression {
           params.PIPELINE_MODE in ['REPO_TO_PROD', 'DEV_TO_PROD']
@@ -95,17 +95,6 @@ pipeline {
     }
 
     stage('Prepare workflow branch') {
-      when {
-        expression { params.PIPELINE_MODE in ['DEV_TO_REPO', 'DEV_TO_PROD'] }
-      }
-      steps {
-        script {
-          GitWorkflowOps.prepareWorkflowBranch(env.GIT_CRED_ID, env.WORKFLOW_ID)
-        }
-      }
-    }
-
-    stage('Dev -> Repo (export)') {
       when {
         expression { params.PIPELINE_MODE in ['DEV_TO_REPO', 'DEV_TO_PROD'] }
       }
