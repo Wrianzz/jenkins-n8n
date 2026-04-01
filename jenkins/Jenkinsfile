@@ -61,7 +61,7 @@ pipeline {
       }
     }
 
-    stage('Validate non-production credentials (pre-approval)') {
+    stage('Validate non-production credentials') {
       when {
         expression { params.PIPELINE_MODE == 'DEV_TO_PROD' }
       }
@@ -72,7 +72,7 @@ pipeline {
       }
     }
 
-    stage('Approval (pre-dev->repo)') {
+    stage('Approval') {
       when {
         expression {
           params.PIPELINE_MODE in ['REPO_TO_PROD', 'DEV_TO_PROD']
@@ -105,17 +105,6 @@ pipeline {
       }
     }
 
-    stage('Validate non-production credentials') {
-      when {
-        expression { params.PIPELINE_MODE in ['REPO_TO_PROD', 'DEV_TO_PROD'] }
-      }
-      steps {
-        script {
-          DeploymentOps.validateWorkflowCredentialsOnly(env.SSH_CRED_ID, env.WORKFLOW_ID)
-        }
-      }
-    }
-
     stage('Commit & push workflow file only') {
       when {
         expression { params.PIPELINE_MODE in ['DEV_TO_REPO', 'DEV_TO_PROD'] }
@@ -128,28 +117,6 @@ pipeline {
             env.authorName,
             env.authorEmail
           )
-        }
-      }
-    }
-
-    stage('Approval') {
-      when {
-        expression {
-          params.PIPELINE_MODE in ['REPO_TO_PROD', 'DEV_TO_PROD']
-        }
-      }
-      steps {
-        script {
-          def approvalInfo = PipelineGuard.requestTwoApprovals(
-            params.PIPELINE_MODE,
-            env.WORKFLOW_ID,
-            env.APPROVER,
-            env.APPROVER_EMAIL
-          )
-
-          env.FIRST_APPROVER  = approvalInfo.firstApprover ?: ''
-          env.SECOND_APPROVER = approvalInfo.secondApprover ?: ''
-          echo "Approval completed. Level 1: ${env.FIRST_APPROVER}, Level 2: ${env.SECOND_APPROVER}"
         }
       }
     }
