@@ -3,17 +3,33 @@ set -euo pipefail
 
 WORKFLOW_ID="${1:?usage: validate-dev-credentials.sh <WORKFLOW_ID>}"
 
-REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-WF_FILE="${REPO_ROOT}/workflows/${WORKFLOW_ID}.json"
+DEV_SSH_HOST="${DEV_SSH_HOST:?DEV_SSH_HOST is required}"
+DEV_SSH_USER="${DEV_SSH_USER:-}"
+DEV_SSH_PORT="${DEV_SSH_PORT:-22}"
+DEV_CONTAINER="${DEV_CONTAINER:-n8n-dev-n8n-dev-1}"
+SSH_KEY_FILE="${SSH_KEY_FILE:-}"
 
-EXPORT_SCRIPT="${REPO_ROOT}/scripts/export-to-git.sh"
+TMP_DIR="${TMPDIR:-/tmp}/n8n-validate-${WORKFLOW_ID}-$$"
+WF_FILE="${TMP_DIR}/${WORKFLOW_ID}.json"
+REMOTE_HOST="${DEV_SSH_USER:+${DEV_SSH_USER}@}${DEV_SSH_HOST}"
+SSH_OPTS=( -p "$DEV_SSH_PORT" -o BatchMode=yes -o StrictHostKeyChecking=accept-new )
+if [[ -n "$SSH_KEY_FILE" ]]; then
+  SSH_OPTS+=( -i "$SSH_KEY_FILE" )
+fi
 
-[[ -x "$EXPORT_SCRIPT" ]] || { echo "[ERR] export script not executable: $EXPORT_SCRIPT"; exit 1; }
+cleanup() {
+  rm -rf "$TMP_DIR"
+}
+trap cleanup EXIT
+
+mkdir -p "$TMP_DIR"
 
 echo "[0] Export workflow from DEV"
-"$EXPORT_SCRIPT" "$WORKFLOW_ID"
+ssh "${SSH_OPTS[@]}" "$REMOTE_HOST" \
+  "docker exec '$DEV_CONTAINER' sh -lc 'rm -rf /tmp/n8n-validate && mkdir -p /tmp/n8n-validate && n8n export:workflow --id \"$WORKFLOW_ID\" --output /tmp/n8n-validate/${WORKFLOW_ID}.json --pretty'"
 
-[[ -f "$WF_FILE" ]] || { echo "[ERR] Workflow file not found after export: $WF_FILE"; exit 1; }
+ssh "${SSH_OPTS[@]}" "$REMOTE_HOST" \
+  "docker exec '$DEV_CONTAINER' cat '/tmp/n8n-validate/${WORKFLOW_ID}.json'" > "$WF_FILE"
 
 echo "[1] Validate workflow credentials naming"
 if ! INVALID_CREDENTIAL_NODES="$(jq -r '
