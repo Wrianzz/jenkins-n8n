@@ -100,17 +100,6 @@ pipeline {
       }
       steps {
         script {
-          GitWorkflowOps.prepareWorkflowBranch(env.GIT_CRED_ID, env.WORKFLOW_ID)
-        }
-      }
-    }
-
-    stage('Dev -> Repo (export)') {
-      when {
-        expression { params.PIPELINE_MODE in ['DEV_TO_REPO', 'DEV_TO_PROD'] }
-      }
-      steps {
-        script {
           DeploymentOps.exportWorkflowFromDev(env.SSH_CRED_ID, env.WORKFLOW_ID)
         }
       }

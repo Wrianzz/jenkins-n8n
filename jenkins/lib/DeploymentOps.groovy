@@ -43,7 +43,7 @@ def validateWorkflowCredentialsOnly(String sshCredId, String gitCredId, String w
     sh """
       set -euo pipefail
 
-      VALIDATION_TMP_DIR="${JENKINS_HOME:-/tmp}/n8n-validate-script-${workflowId}-${BUILD_NUMBER:-0}"
+      VALIDATION_TMP_DIR="${JENKINS_HOME:-/jenkins_home}/n8n-validate-script-${workflowId}-${BUILD_NUMBER:-0}"
       cleanup() {
         rm -rf "$VALIDATION_TMP_DIR"
       }
@@ -59,8 +59,7 @@ def validateWorkflowCredentialsOnly(String sshCredId, String gitCredId, String w
         git fetch origin "workflow/${workflowId}"
         git checkout -B "workflow/${workflowId}" "origin/workflow/${workflowId}"
       else
-        echo "[WARN] Branch workflow/${workflowId} not found on remote. Fallback to origin/master for precheck context."
-        git checkout -B "validate/${workflowId}" origin/master
+        echo "[WARN] Branch workflow/${workflowId} not found on remote. Are you sure you already push the Workflow?."
       fi
 
       export SSH_KEY_FILE
