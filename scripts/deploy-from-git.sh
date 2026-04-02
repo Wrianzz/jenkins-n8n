@@ -4,6 +4,8 @@ set -euo pipefail
 # Usage:
 #   scripts/deploy-from-git.sh <WORKFLOW_ID>
 #   scripts/deploy-from-git.sh --file workflows/<something>.json
+#   scripts/deploy-from-git.sh --validate-only <WORKFLOW_ID>
+#   scripts/deploy-from-git.sh --validate-only --file workflows/<something>.json
 
 PROD_SSH_HOST="${PROD_SSH_HOST:?PROD_SSH_HOST is required}"
 PROD_SSH_USER="${PROD_SSH_USER:-}"
@@ -25,9 +27,11 @@ if [[ -n "$SSH_KEY_FILE" ]]; then
   PROD_SCP_OPTS+=( -i "$SSH_KEY_FILE" )
 fi
 
-PROD_PROJECT_ID="$(ssh "${PROD_SSH_OPTS[@]}" "$PROD_REMOTE" \
-  "docker exec '$PROD_PG_CONTAINER' psql -U n8n -d n8n -tA -c \"select id from project order by \\\"createdAt\\\" asc limit 1;\"" | tr -d '\r' | xargs)"
-[[ -n "$PROD_PROJECT_ID" ]] || { echo "[ERR] PROD_PROJECT_ID not found"; exit 1; }
+VALIDATE_ONLY=0
+if [[ "${1:-}" == "--validate-only" ]]; then
+  VALIDATE_ONLY=1
+  shift
+fi
 
 WF_FILE=""
 if [[ "${1:-}" == "--file" ]]; then
@@ -67,6 +71,15 @@ if [[ -n "$INVALID_CREDENTIAL_NODES" ]]; then
 fi
 
 echo "    OK: all node credentials already use suffix -Production (case-insensitive)."
+
+if [[ "$VALIDATE_ONLY" -eq 1 ]]; then
+  echo "[OK] Validation only mode completed."
+  exit 0
+fi
+
+PROD_PROJECT_ID="$(ssh "${PROD_SSH_OPTS[@]}" "$PROD_REMOTE" \
+  "docker exec '$PROD_PG_CONTAINER' psql -U n8n -d n8n -tA -c \"select id from project order by \\\"createdAt\\\" asc limit 1;\"" | tr -d '\r' | xargs)"
+[[ -n "$PROD_PROJECT_ID" ]] || { echo "[ERR] PROD_PROJECT_ID not found"; exit 1; }
 
 base="$(basename "$WF_FILE")"
 remote_host_file="/tmp/${base}"
