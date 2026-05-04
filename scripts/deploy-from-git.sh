@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # Usage:
-#   scripts/deploy-from-git.sh <WORKFLOW_ID>
+#   scripts/deploy-from-git.sh <WORKFLOW_ID> [SUB_WORKFLOW_IDS_CSV]
 #   scripts/deploy-from-git.sh --file workflows/<something>.json
 #   scripts/deploy-from-git.sh --validate-only <WORKFLOW_ID>
 #   scripts/deploy-from-git.sh --validate-only --file workflows/<something>.json
@@ -39,6 +39,7 @@ if [[ "${1:-}" == "--file" ]]; then
   [[ "$WF_FILE" = /* ]] || WF_FILE="${REPO_ROOT}/${WF_FILE}"
 else
   WORKFLOW_ID="${1:?usage: deploy-from-git.sh <WORKFLOW_ID>}"
+  SUB_WORKFLOW_IDS_CSV="${2:-}"
   WF_FILE="${WF_DIR}/${WORKFLOW_ID}.json"
 fi
 
@@ -98,6 +99,32 @@ else
 fi
 
 echo "[3] Transfer and import workflow to PROD"
+
+if [[ -n "${SUB_WORKFLOW_IDS_CSV:-}" ]]; then
+  IFS=',' read -r -a SUB_WORKFLOW_IDS <<< "$SUB_WORKFLOW_IDS_CSV"
+  for sub_id_raw in "${SUB_WORKFLOW_IDS[@]}"; do
+    sub_id="$(echo "$sub_id_raw" | xargs)"
+    [[ -n "$sub_id" ]] || continue
+
+    sub_file="${WF_DIR}/${sub_id}.json"
+    if [[ ! -f "$sub_file" ]]; then
+      echo "[WARN] Selected sub-workflow file not found in repo: $sub_file. Skip push for this sub-workflow."
+      continue
+    fi
+
+    sub_host_file="/tmp/${sub_id}.json"
+    sub_container_file="/tmp/${sub_id}.json"
+    echo "    Push selected sub-workflow: $sub_id"
+    scp "${PROD_SCP_OPTS[@]}" "$sub_file" "$PROD_REMOTE:$sub_host_file"
+    ssh "${PROD_SSH_OPTS[@]}" "$PROD_REMOTE" \
+      "docker cp '$sub_host_file' '$PROD_CONTAINER:$sub_container_file' && docker exec '$PROD_CONTAINER' n8n import:workflow --input '$sub_container_file' --projectId '$PROD_PROJECT_ID'"
+    ssh "${PROD_SSH_OPTS[@]}" "$PROD_REMOTE" \
+      "docker exec '$PROD_CONTAINER' n8n publish:workflow --id='$sub_id'"
+    ssh "${PROD_SSH_OPTS[@]}" "$PROD_REMOTE" \
+      "rm -f '$sub_host_file'; docker exec '$PROD_CONTAINER' sh -lc 'rm -f \"$sub_container_file\" || true'"
+  done
+fi
+
 scp "${PROD_SCP_OPTS[@]}" "$WF_FILE" "$PROD_REMOTE:$remote_host_file"
 ssh "${PROD_SSH_OPTS[@]}" "$PROD_REMOTE" \
   "docker cp '$remote_host_file' '$PROD_CONTAINER:$remote_container_file' && docker exec '$PROD_CONTAINER' n8n import:workflow --input '$remote_container_file' --projectId '$PROD_PROJECT_ID'"
