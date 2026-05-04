@@ -80,21 +80,23 @@ Please contact DevOps team to setup/import the sub-workflow first, then rerun th
     booleanParam(name: "PUSH_SUBWF_${subId}", defaultValue: false, description: "Push sub-workflow ${subId} to production")
   }
 
-  Map inputResult = input(
+  def inputResult = input(
     id: "subworkflow-selection-${env.BUILD_NUMBER}",
     message: "Sub-workflow found for main workflow ${workflowId}. Choose sub-workflow(s) to also push to production (optional).",
     ok: 'Confirm Sub-workflow Selection',
     parameters: selectionParams
   )
 
-  if (!(inputResult instanceof Map)) {
-    return ''
+  if (inputResult instanceof Boolean) {
+    return inputResult ? subWorkflowIds[0] : ''
   }
 
   List<String> selectedIds = []
-  subWorkflowIds.each { subId ->
-    if (inputResult["PUSH_SUBWF_${subId}"] == true) {
-      selectedIds << subId
+  if (inputResult instanceof Map) {
+    subWorkflowIds.each { subId ->
+      if (inputResult["PUSH_SUBWF_${subId}"] == true) {
+        selectedIds << subId
+      }
     }
   }
 
