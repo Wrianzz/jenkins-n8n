@@ -36,10 +36,20 @@ def validateAndSelectSubWorkflowsForProd(String apiBaseUrl, String apiKeyCredId,
       set -euo pipefail
       jq -r '
         def wf_objs: if type == "array" then .[] else . end;
+        def extract_subwf_id($raw):
+          if ($raw | type) == "string" then
+            $raw
+          elif ($raw | type) == "object" then
+            ($raw.value // (try ($raw.cachedResultUrl | strings | capture("/workflow/(?<id>[^/]+)$").id) catch empty) // empty)
+          else
+            empty
+          end;
+
         wf_objs
         | .nodes[]?
         | select((.type // "") | test("executeWorkflow"; "i"))
-        | (.parameters.workflowId // .parameters.workflow?.id // empty)
+        | (.parameters.workflowId // .parameters.workflow?.id // empty) as $rawRef
+        | extract_subwf_id($rawRef)
       ' '${workflowFile}' | awk 'NF' | sort -u
     """,
     returnStdout: true
