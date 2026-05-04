@@ -40,7 +40,7 @@ def validateAndSelectSubWorkflowsForProd(String apiBaseUrl, String apiKeyCredId,
           if ($raw | type) == "string" then
             $raw
           elif ($raw | type) == "object" then
-            ($raw.value // (try ($raw.cachedResultUrl | strings | capture("/workflow/(?<id>[^/]+)$").id) catch empty) // empty)
+            ($raw.value // (try ($raw.cachedResultUrl | strings | capture("/workflow/(?<id>[^/]+)").id) catch empty) // empty)
           else
             empty
           end;
