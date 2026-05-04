@@ -11,9 +11,9 @@ def checkoutRequiredFiles(String repoHttp, String gitCredId) {
     extensions: [[
       $class: 'SparseCheckoutPaths',
       sparseCheckoutPaths: [
-        [path: 'scripts/'],
-        [path: 'workflows/'],
-        [path: 'jenkins/']
+        [path: 'scripts'],
+        [path: 'workflows'],
+        [path: 'jenkins']
       ]
     ]]
   ])
@@ -60,10 +60,12 @@ def commitAndPushWorkflowOnly(String gitCredId, String workflowId, String author
 
       git remote set-url origin "http://\${GH_USER}:\${GH_PASS}@atlassian.satnusa.com:7990/scm/dvo/n8n-cicd-workflows.git"
       if git ls-remote --exit-code --heads origin "workflow/${workflowId}" >/dev/null 2>&1; then
-        git push --force-with-lease origin HEAD:"workflow/${workflowId}"
+        git push --force-with-lease origin HEAD:refs/heads/workflow/${workflowId}
       else
-        git push origin HEAD:"workflow/${workflowId}"
+        git push origin HEAD:refs/heads/workflow/${workflowId}
       fi
+
+      git checkout master
     """
   }
 }
