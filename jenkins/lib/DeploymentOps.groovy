@@ -23,9 +23,94 @@ def deployFromRepoToProd(String sshCredId, String workflowId) {
       set -e
       chmod +x scripts/deploy-from-git.sh scripts/promote-creds.sh
       export SSH_KEY_FILE
-      scripts/deploy-from-git.sh "${workflowId}"
+      scripts/deploy-from-git.sh "${workflowId}" "${env.SELECTED_SUBWORKFLOW_IDS ?: ''}"
     """
   }
+}
+
+def validateAndSelectSubWorkflowsForProd(String apiBaseUrl, String apiKeyCredId, String workflowId) {
+  String workflowFile = "workflows/${workflowId}.json"
+
+  String rawSubWorkflowIds = sh(
+    script: """
+      set -euo pipefail
+      jq -r '
+        def wf_objs: if type == "array" then .[] else . end;
+        def extract_subwf_id($raw):
+          if ($raw | type) == "string" then
+            $raw
+          elif ($raw | type) == "object" then
+            ($raw.value // (try ($raw.cachedResultUrl | strings | capture("/workflow/(?<id>[^/]+)").id) catch empty) // empty)
+          else
+            empty
+          end;
+
+        wf_objs
+        | .nodes[]?
+        | select((.type // "") | test("executeWorkflow"; "i"))
+        | (.parameters.workflowId // .parameters.workflow?.id // empty) as $rawRef
+        | extract_subwf_id($rawRef)
+      ' '${workflowFile}' | awk 'NF' | sort -u
+    """,
+    returnStdout: true
+  ).trim()
+
+  if (!rawSubWorkflowIds) {
+    echo "[DeploymentOps] Workflow ${workflowId} does not depend on sub-workflow. Continue as usual."
+    return ''
+  }
+
+  List<String> subWorkflowIds = rawSubWorkflowIds.readLines().collect { it.trim() }.findAll { it }
+  echo "[DeploymentOps] Found sub-workflow reference(s): ${subWorkflowIds.join(', ')}"
+
+  withCredentials([string(credentialsId: apiKeyCredId, variable: 'PROD_N8N_API_KEY')]) {
+    for (String subId : subWorkflowIds) {
+      int httpCode = sh(
+        script: """
+          set -euo pipefail
+          curl -sS -o /dev/null -w '%{http_code}' \\
+            -H "X-N8N-API-KEY: \$PROD_N8N_API_KEY" \\
+            "${apiBaseUrl}/workflows/${subId}"
+        """,
+        returnStdout: true
+      ).trim().toInteger()
+
+      if (httpCode == 404) {
+        error("""[ABORT] Sub-workflow '${subId}' was not found in production instance.
+Please contact DevOps team to setup/import the sub-workflow first, then rerun this pipeline.""")
+      }
+
+      if (httpCode != 200) {
+        error("[ABORT] Failed to validate sub-workflow '${subId}' on production API. HTTP ${httpCode}.")
+      }
+    }
+  }
+
+  List selectionParams = subWorkflowIds.collect { subId ->
+    booleanParam(name: "PUSH_SUBWF_${subId}", defaultValue: false, description: "Push sub-workflow ${subId} to production")
+  }
+
+  def inputResult = input(
+    id: "subworkflow-selection-${env.BUILD_NUMBER}",
+    message: "Sub-workflow found for main workflow ${workflowId}. Choose sub-workflow(s) to also push to production (optional).",
+    ok: 'Confirm Sub-workflow Selection',
+    parameters: selectionParams
+  )
+
+  if (inputResult instanceof Boolean) {
+    return inputResult ? subWorkflowIds[0] : ''
+  }
+
+  List<String> selectedIds = []
+  if (inputResult instanceof Map) {
+    subWorkflowIds.each { subId ->
+      if (inputResult["PUSH_SUBWF_${subId}"] == true) {
+        selectedIds << subId
+      }
+    }
+  }
+
+  return selectedIds.join(',')
 }
 
 def validateWorkflowCredentialsOnly(String gitCredId, String workflowId) {
