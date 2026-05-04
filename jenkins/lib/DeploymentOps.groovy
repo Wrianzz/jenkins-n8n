@@ -28,7 +28,7 @@ def deployFromRepoToProd(String sshCredId, String workflowId) {
   }
 }
 
-def validateAndSelectSubWorkflowsForProd(String sshCredId, String workflowId) {
+def validateAndSelectSubWorkflowsForProd(String apiBaseUrl, String apiKeyCredId, String workflowId) {
   String workflowFile = "workflows/${workflowId}.json"
 
   String rawSubWorkflowIds = sh(
@@ -53,21 +53,25 @@ def validateAndSelectSubWorkflowsForProd(String sshCredId, String workflowId) {
   List<String> subWorkflowIds = rawSubWorkflowIds.readLines().collect { it.trim() }.findAll { it }
   echo "[DeploymentOps] Found sub-workflow reference(s): ${subWorkflowIds.join(', ')}"
 
-  withCredentials([sshUserPrivateKey(credentialsId: sshCredId, keyFileVariable: 'SSH_KEY_FILE')]) {
+  withCredentials([string(credentialsId: apiKeyCredId, variable: 'PROD_N8N_API_KEY')]) {
     for (String subId : subWorkflowIds) {
-      String exists = sh(
+      int httpCode = sh(
         script: """
           set -euo pipefail
-          PROD_REMOTE="${env.PROD_SSH_USER}@${env.PROD_SSH_HOST}"
-          ssh -i "$SSH_KEY_FILE" -p "${env.PROD_SSH_PORT}" -o BatchMode=yes -o StrictHostKeyChecking=accept-new "$PROD_REMOTE" \
-            "docker exec '${env.PROD_PG_CONTAINER}' psql -U n8n -d n8n -tA -c \"select count(1) from workflow_entity where id='${subId}';\"" | tr -d '\\r' | xargs
+          curl -sS -o /dev/null -w '%{http_code}' \\
+            -H "X-N8N-API-KEY: \$PROD_N8N_API_KEY" \\
+            "${apiBaseUrl}/workflows/${subId}"
         """,
         returnStdout: true
-      ).trim()
+      ).trim().toInteger()
 
-      if (exists != '1') {
+      if (httpCode == 404) {
         error("""[ABORT] Sub-workflow '${subId}' was not found in production instance.
 Please contact DevOps team to setup/import the sub-workflow first, then rerun this pipeline.""")
+      }
+
+      if (httpCode != 200) {
+        error("[ABORT] Failed to validate sub-workflow '${subId}' on production API. HTTP ${httpCode}.")
       }
     }
   }

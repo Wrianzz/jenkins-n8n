@@ -29,6 +29,8 @@ pipeline {
     PROD_SSH_HOST = '192.168.88.20'
     PROD_SSH_USER = 'jenkins'
     PROD_SSH_PORT = '22'
+    PROD_N8N_API_BASE_URL = 'http://192.168.88.20:5678/api/v1'
+    PROD_N8N_API_KEY_CRED_ID = 'n8n-production-api-key'
 
     DEV_CONTAINER     = 'n8n-compose-n8n-prod-1'
     PROD_CONTAINER    = 'n8n'
@@ -157,7 +159,11 @@ pipeline {
       }
       steps {
         script {
-          env.SELECTED_SUBWORKFLOW_IDS = DeploymentOps.validateAndSelectSubWorkflowsForProd(env.SSH_CRED_ID, env.WORKFLOW_ID)
+          env.SELECTED_SUBWORKFLOW_IDS = DeploymentOps.validateAndSelectSubWorkflowsForProd(
+            env.PROD_N8N_API_BASE_URL,
+            env.PROD_N8N_API_KEY_CRED_ID,
+            env.WORKFLOW_ID
+          )
           echo "Selected sub-workflow IDs to push: ${env.SELECTED_SUBWORKFLOW_IDS ?: '(none)'}"
         }
       }
