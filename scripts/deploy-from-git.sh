@@ -52,31 +52,54 @@ collect_cred_ids_from_file() {
   jq -r -f "$EXTRACT_FILTER" "$file_path" 2>/dev/null | awk 'NF' | sort -u
 }
 
+validate_credential_suffix() {
+  local file_path="$1"
+
+  local invalid_nodes
+  if ! invalid_nodes="$(jq -r '
+    def workflow_objects:
+      if type == "array" then .[] else . end;
+
+    workflow_objects
+    | .nodes[]?
+    | select((.credentials? | type) == "object") as $node
+    | ($node.credentials | to_entries[]?) as $cred
+    | ($cred.value.name // "") as $credName
+    | select(($credName | test("-production$"; "i")) | not)
+    | "- node=\($node.name // "<unnamed>") credentialType=\($cred.key) credentialName=\($credName)"
+  ' "$file_path")"; then
+    echo "[ERR] Failed to parse workflow JSON structure while validating credentials: $file_path"
+    exit 1
+  fi
+
+  if [[ -n "$invalid_nodes" ]]; then
+    echo "[ERR] Found non-production credential name(s) in: $file_path"
+    echo "[ERR] Every credential in workflow must use the format: <Nama-kredensial>-Production (case-insensitive)."
+    echo "$invalid_nodes"
+    exit 1
+  fi
+
+  echo "    OK: credential names in $(basename "$file_path") use suffix -Production (case-insensitive)."
+}
+
 echo "[0] Validate workflow credentials naming"
-if ! INVALID_CREDENTIAL_NODES="$(jq -r '
-  def workflow_objects:
-    if type == "array" then .[] else . end;
+validate_credential_suffix "$WF_FILE"
 
-  workflow_objects
-  | .nodes[]?
-  | select((.credentials? | type) == "object") as $node
-  | ($node.credentials | to_entries[]?) as $cred
-  | ($cred.value.name // "") as $credName
-  | select(($credName | test("-production$"; "i")) | not)
-  | "- node=\($node.name // "<unnamed>") credentialType=\($cred.key) credentialName=\($credName)"
-' "$WF_FILE")"; then
-  echo "[ERR] Failed to parse workflow JSON structure while validating credentials: $WF_FILE"
-  exit 1
+if [[ -n "${SUB_WORKFLOW_IDS_CSV:-}" ]]; then
+  IFS=',' read -r -a SUB_WORKFLOW_IDS <<< "$SUB_WORKFLOW_IDS_CSV"
+  for sub_id_raw in "${SUB_WORKFLOW_IDS[@]}"; do
+    sub_id="$(echo "$sub_id_raw" | xargs)"
+    [[ -n "$sub_id" ]] || continue
+
+    sub_file="${WF_DIR}/${sub_id}.json"
+    if [[ ! -f "$sub_file" ]]; then
+      echo "[WARN] Selected sub-workflow file not found in repo while validating credential naming: $sub_file"
+      continue
+    fi
+
+    validate_credential_suffix "$sub_file"
+  done
 fi
-
-if [[ -n "$INVALID_CREDENTIAL_NODES" ]]; then
-  echo "[ERR] Found non-production credential name(s)."
-  echo "[ERR] Every credential in workflow must use the format: <Nama-kredensial>-Production (case-insensitive)."
-  echo "$INVALID_CREDENTIAL_NODES"
-  exit 1
-fi
-
-echo "    OK: all node credentials already use suffix -Production (case-insensitive)."
 
 if [[ "$VALIDATE_ONLY" -eq 1 ]]; then
   echo "[OK] Validation only mode completed."
