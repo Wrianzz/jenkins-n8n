@@ -63,6 +63,10 @@ def validateAndSelectSubWorkflowsForProd(String apiBaseUrl, String apiKeyCredId,
   List<String> subWorkflowIds = rawSubWorkflowIds.readLines().collect { it.trim() }.findAll { it }
   echo "[DeploymentOps] Found sub-workflow reference(s): ${subWorkflowIds.join(', ')}"
 
+  List<String> existingSubWorkflows = []
+  List<String> missingSubWorkflows = []
+  List<String> erroredSubWorkflows = []
+
   withCredentials([string(credentialsId: apiKeyCredId, variable: 'PROD_N8N_API_KEY')]) {
     for (String subId : subWorkflowIds) {
       int httpCode = sh(
@@ -75,15 +79,27 @@ def validateAndSelectSubWorkflowsForProd(String apiBaseUrl, String apiKeyCredId,
         returnStdout: true
       ).trim().toInteger()
 
-      if (httpCode == 404) {
-        error("""[ABORT] Sub-workflow '${subId}' was not found in production instance.
-Please contact DevOps team to setup/import the sub-workflow first, then rerun this pipeline.""")
-      }
-
-      if (httpCode != 200) {
-        error("[ABORT] Failed to validate sub-workflow '${subId}' on production API. HTTP ${httpCode}.")
+      if (httpCode == 200) {
+        existingSubWorkflows << subId
+      } else if (httpCode == 404) {
+        missingSubWorkflows << subId
+      } else {
+        erroredSubWorkflows << "${subId} (HTTP ${httpCode})"
       }
     }
+  }
+
+  echo "[DeploymentOps] Sub-workflow status on production:"
+  echo "  - EXISTS (${existingSubWorkflows.size()}): ${existingSubWorkflows ? existingSubWorkflows.join(', ') : '-'}"
+  echo "  - MISSING (${missingSubWorkflows.size()}): ${missingSubWorkflows ? missingSubWorkflows.join(', ') : '-'}"
+  echo "  - ERROR (${erroredSubWorkflows.size()}): ${erroredSubWorkflows ? erroredSubWorkflows.join(', ') : '-'}"
+
+  if (!missingSubWorkflows.isEmpty() || !erroredSubWorkflows.isEmpty()) {
+    error("""[ABORT] Sub-workflow validation failed.
+EXISTS: ${existingSubWorkflows ? existingSubWorkflows.join(', ') : '-'}
+MISSING: ${missingSubWorkflows ? missingSubWorkflows.join(', ') : '-'}
+ERROR: ${erroredSubWorkflows ? erroredSubWorkflows.join(', ') : '-'}
+Please share this output to DevOps team, setup missing sub-workflow(s), then rerun this pipeline.""")
   }
 
   List selectionParams = subWorkflowIds.collect { subId ->
@@ -104,7 +120,8 @@ Please contact DevOps team to setup/import the sub-workflow first, then rerun th
   List<String> selectedIds = []
   if (inputResult instanceof Map) {
     subWorkflowIds.each { subId ->
-      if (inputResult["PUSH_SUBWF_${subId}"] == true) {
+      def selectedRaw = inputResult["PUSH_SUBWF_${subId}"]
+      if (selectedRaw == true || selectedRaw?.toString()?.equalsIgnoreCase('true')) {
         selectedIds << subId
       }
     }
