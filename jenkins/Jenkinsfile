@@ -177,7 +177,7 @@ pipeline {
       }
       steps {
         script {
-          DeploymentOps.deployFromRepoToProd(env.SSH_CRED_ID, env.WORKFLOW_ID)
+          DeploymentOps.deployFromRepoToProd(env.SSH_CRED_ID, env.WORKFLOW_ID, env.SELECTED_SUBWORKFLOW_IDS ?: '')
         }
       }
     }

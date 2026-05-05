@@ -47,31 +47,59 @@ fi
 [[ -f "$EXTRACT_FILTER" ]] || { echo "[ERR] jq filter not found: $EXTRACT_FILTER"; exit 1; }
 [[ -x "$PROMOTE_SCRIPT" ]] || { echo "[ERR] promote script not executable: $PROMOTE_SCRIPT"; exit 1; }
 
+collect_cred_ids_from_file() {
+  local file_path="$1"
+  jq -r -f "$EXTRACT_FILTER" "$file_path" 2>/dev/null | awk 'NF' | sort -u
+}
+
+validate_credential_suffix() {
+  local file_path="$1"
+
+  local invalid_nodes
+  if ! invalid_nodes="$(jq -r '
+    def workflow_objects:
+      if type == "array" then .[] else . end;
+
+    workflow_objects
+    | .nodes[]?
+    | select((.credentials? | type) == "object") as $node
+    | ($node.credentials | to_entries[]?) as $cred
+    | ($cred.value.name // "") as $credName
+    | select(($credName | test("-production$"; "i")) | not)
+    | "- node=\($node.name // "<unnamed>") credentialType=\($cred.key) credentialName=\($credName)"
+  ' "$file_path")"; then
+    echo "[ERR] Failed to parse workflow JSON structure while validating credentials: $file_path"
+    exit 1
+  fi
+
+  if [[ -n "$invalid_nodes" ]]; then
+    echo "[ERR] Found non-production credential name(s) in: $file_path"
+    echo "[ERR] Every credential in workflow must use the format: <Nama-kredensial>-Production (case-insensitive)."
+    echo "$invalid_nodes"
+    exit 1
+  fi
+
+  echo "    OK: credential names in $(basename "$file_path") use suffix -Production (case-insensitive)."
+}
+
 echo "[0] Validate workflow credentials naming"
-if ! INVALID_CREDENTIAL_NODES="$(jq -r '
-  def workflow_objects:
-    if type == "array" then .[] else . end;
+validate_credential_suffix "$WF_FILE"
 
-  workflow_objects
-  | .nodes[]?
-  | select((.credentials? | type) == "object") as $node
-  | ($node.credentials | to_entries[]?) as $cred
-  | ($cred.value.name // "") as $credName
-  | select(($credName | test("-production$"; "i")) | not)
-  | "- node=\($node.name // "<unnamed>") credentialType=\($cred.key) credentialName=\($credName)"
-' "$WF_FILE")"; then
-  echo "[ERR] Failed to parse workflow JSON structure while validating credentials: $WF_FILE"
-  exit 1
+if [[ -n "${SUB_WORKFLOW_IDS_CSV:-}" ]]; then
+  IFS=',' read -r -a SUB_WORKFLOW_IDS <<< "$SUB_WORKFLOW_IDS_CSV"
+  for sub_id_raw in "${SUB_WORKFLOW_IDS[@]}"; do
+    sub_id="$(echo "$sub_id_raw" | xargs)"
+    [[ -n "$sub_id" ]] || continue
+
+    sub_file="${WF_DIR}/${sub_id}.json"
+    if [[ ! -f "$sub_file" ]]; then
+      echo "[WARN] Selected sub-workflow file not found in repo while validating credential naming: $sub_file"
+      continue
+    fi
+
+    validate_credential_suffix "$sub_file"
+  done
 fi
-
-if [[ -n "$INVALID_CREDENTIAL_NODES" ]]; then
-  echo "[ERR] Found non-production credential name(s)."
-  echo "[ERR] Every credential in workflow must use the format: <Nama-kredensial>-Production (case-insensitive)."
-  echo "$INVALID_CREDENTIAL_NODES"
-  exit 1
-fi
-
-echo "    OK: all node credentials already use suffix -Production (case-insensitive)."
 
 if [[ "$VALIDATE_ONLY" -eq 1 ]]; then
   echo "[OK] Validation only mode completed."
@@ -86,16 +114,45 @@ base="$(basename "$WF_FILE")"
 remote_host_file="/tmp/${base}"
 remote_container_file="/tmp/${base}"
 
-echo "[1] Scan credential IDs from workflow"
-mapfile -t CRED_IDS < <(jq -r -f "$EXTRACT_FILTER" "$WF_FILE" | awk 'NF' | sort -u)
+echo "[1] Scan credential IDs from workflow(s)"
+
+declare -a CRED_IDS=()
+
+mapfile -t MAIN_CRED_IDS < <(collect_cred_ids_from_file "$WF_FILE")
+if [[ "${#MAIN_CRED_IDS[@]}" -gt 0 ]]; then
+  CRED_IDS+=("${MAIN_CRED_IDS[@]}")
+fi
+
+if [[ -n "${SUB_WORKFLOW_IDS_CSV:-}" ]]; then
+  IFS=',' read -r -a SUB_WORKFLOW_IDS <<< "$SUB_WORKFLOW_IDS_CSV"
+  for sub_id_raw in "${SUB_WORKFLOW_IDS[@]}"; do
+    sub_id="$(echo "$sub_id_raw" | xargs)"
+    [[ -n "$sub_id" ]] || continue
+
+    sub_file="${WF_DIR}/${sub_id}.json"
+    if [[ ! -f "$sub_file" ]]; then
+      echo "[WARN] Selected sub-workflow file not found in repo while scanning credentials: $sub_file"
+      continue
+    fi
+
+    mapfile -t SUB_CRED_IDS < <(collect_cred_ids_from_file "$sub_file")
+    if [[ "${#SUB_CRED_IDS[@]}" -gt 0 ]]; then
+      CRED_IDS+=("${SUB_CRED_IDS[@]}")
+    fi
+  done
+fi
+
+if [[ "${#CRED_IDS[@]}" -gt 0 ]]; then
+  mapfile -t CRED_IDS < <(printf "%s\n" "${CRED_IDS[@]}" | awk 'NF' | sort -u)
+fi
 
 if [[ "${#CRED_IDS[@]}" -gt 0 ]]; then
   CRED_IDS_RAW="${CRED_IDS[*]}"
-  echo "    Found ${#CRED_IDS[@]} credential ID(s): ${CRED_IDS_RAW}"
+  echo "    Found ${#CRED_IDS[@]} credential ID(s) from main + selected sub-workflow(s): ${CRED_IDS_RAW}"
   echo "[2] Promote credentials to PROD"
   "$PROMOTE_SCRIPT" "$CRED_IDS_RAW"
 else
-  echo "    No credential IDs found in workflow; skip promote creds"
+  echo "    No credential IDs found in main/sub-workflow files; skip promote creds"
 fi
 
 echo "[3] Transfer and import workflow to PROD"
