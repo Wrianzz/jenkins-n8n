@@ -125,15 +125,23 @@ Please share this output to DevOps team, setup missing sub-workflow(s), then rer
 
   List<String> selectedIds = []
   if (inputResult instanceof Map) {
-    subWorkflowIds.each { subId ->
-      def selectedRaw = inputResult["PUSH_SUBWF_${subId}"]
+    Map normalizedInput = [:]
+    inputResult.each { key, value ->
+      String keyStr = key?.toString()?.trim() ?: ''
+      normalizedInput[keyStr] = value
+    }
+
+    normalizedInput.each { key, selectedRaw ->
+      if (!key.startsWith('PUSH_SUBWF_')) {
+        return
+      }
       if (selectedRaw == true || selectedRaw?.toString()?.equalsIgnoreCase('true')) {
-        selectedIds << subId
+        selectedIds << key.replaceFirst('^PUSH_SUBWF_', '').trim()
       }
     }
   }
 
-  return selectedIds.join(',')
+  return selectedIds.unique().join(',')
 }
 
 def validateWorkflowCredentialsOnly(String gitCredId, String workflowId) {
