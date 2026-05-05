@@ -103,7 +103,12 @@ Please share this output to DevOps team, setup missing sub-workflow(s), then rer
   }
 
   List selectionParams = subWorkflowIds.collect { subId ->
-    booleanParam(name: "PUSH_SUBWF_${subId}", defaultValue: false, description: "Push sub-workflow ${subId} to production")
+    [
+      $class: 'BooleanParameterDefinition',
+      name: "PUSH_SUBWF_${subId}",
+      defaultValue: false,
+      description: "Push sub-workflow ${subId} to production"
+    ]
   }
 
   def inputResult = input(
@@ -112,6 +117,7 @@ Please share this output to DevOps team, setup missing sub-workflow(s), then rer
     ok: 'Confirm Sub-workflow Selection',
     parameters: selectionParams
   )
+  echo "[DeploymentOps] Input result type: ${inputResult?.getClass()?.name ?: 'null'}; value: ${inputResult}"
 
   if (inputResult instanceof Boolean) {
     return inputResult ? subWorkflowIds[0] : ''
