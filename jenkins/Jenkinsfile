@@ -19,29 +19,28 @@ pipeline {
   }
 
   environment {
-    WORKFLOW_ID = 'Gkbkbt96LuKrVHz3hMfRf'
+    WORKFLOW_ID = 'EmmBXc2Kh7Sb8QfH'
 
     SSH_CRED_ID  = 'n8n-cross-server-ssh'
-    DEV_SSH_HOST = '192.168.88.82'
+    DEV_SSH_HOST = '192.168.88.20'
     DEV_SSH_USER = 'jenkins'
     DEV_SSH_PORT = '22'
 
-    PROD_SSH_HOST = '192.168.88.20'
+    PROD_SSH_HOST = '192.168.88.82'
     PROD_SSH_USER = 'jenkins'
     PROD_SSH_PORT = '22'
-    PROD_N8N_API_BASE_URL = 'http://192.168.88.20:5678/api/v1'
+    PROD_N8N_API_BASE_URL = 'https://192.168.88.82:8443/api/v1'
     PROD_N8N_API_KEY_CRED_ID = 'n8n-production-api-key'
 
-    DEV_CONTAINER     = 'n8n-compose-n8n-prod-1'
-    PROD_CONTAINER    = 'n8n'
-    PROD_PG_CONTAINER = 'n8n-postgres'
+    DEV_CONTAINER     = 'n8n'
+    PROD_CONTAINER    = 'n8n-compose-n8n-prod-1'
+    PROD_PG_CONTAINER = 'n8n-compose-postgres-prod-1'
 
     REPO_HTTP = 'http://atlassian.satnusa.com:7990/scm/dvo/n8n-cicd-workflows.git'
     GIT_CRED_ID = 'bitbucket-satnusa-account'
 
     APPROVER = 'o.midiyanto, omidiyanto, fathur.morax'
     APPROVER_EMAIL = 'o.midiyanto@satnusa.com, omidiyanto7@gmail.com, arthurwiriansyah@gmail.com'
-    SELECTED_SUBWORKFLOW_IDS = ''
   }
 
   stages {
@@ -159,11 +158,14 @@ pipeline {
       }
       steps {
         script {
-          env.SELECTED_SUBWORKFLOW_IDS = DeploymentOps.validateAndSelectSubWorkflowsForProd(
-            env.PROD_N8N_API_BASE_URL,
-            env.PROD_N8N_API_KEY_CRED_ID,
-            env.WORKFLOW_ID
-          )
+          String selectedSubWorkflowIds = DeploymentOps.validateAndSelectSubWorkflowsForProd(
+              env.PROD_N8N_API_BASE_URL,
+              env.PROD_N8N_API_KEY_CRED_ID,
+              env.WORKFLOW_ID
+          ) ?: ''
+          
+          env.SELECTED_SUBWORKFLOW_IDS = selectedSubWorkflowIds
+          
           echo "Selected sub-workflow IDs to push: ${env.SELECTED_SUBWORKFLOW_IDS ?: '(none)'}"
         }
       }

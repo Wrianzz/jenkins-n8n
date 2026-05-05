@@ -14,7 +14,11 @@ def exportWorkflowFromDev(String sshCredId, String workflowId) {
   }
 }
 
-def deployFromRepoToProd(String sshCredId, String workflowId) {
+def deployFromRepoToProd(String sshCredId, String workflowId, String selectedSubWorkflowIds = '') {
+  String selectedSubWorkflowIdsArg = selectedSubWorkflowIds?.trim() ?: ''
+
+  echo "[DeploymentOps] Selected sub-workflow IDs to push: ${selectedSubWorkflowIdsArg ?: '(none)'}"
+
   withCredentials([sshUserPrivateKey(
     credentialsId: sshCredId,
     keyFileVariable: 'SSH_KEY_FILE'
@@ -23,7 +27,7 @@ def deployFromRepoToProd(String sshCredId, String workflowId) {
       set -e
       chmod +x scripts/deploy-from-git.sh scripts/promote-creds.sh
       export SSH_KEY_FILE
-      scripts/deploy-from-git.sh "${workflowId}" "${env.SELECTED_SUBWORKFLOW_IDS ?: ''}"
+      scripts/deploy-from-git.sh "${workflowId}" "${selectedSubWorkflowIdsArg}"
     """
   }
 }
@@ -40,7 +44,11 @@ def validateAndSelectSubWorkflowsForProd(String apiBaseUrl, String apiKeyCredId,
           if (\$raw | type) == "string" then
             \$raw
           elif (\$raw | type) == "object" then
-            (\$raw.value // (try (\$raw.cachedResultUrl | strings | capture("/workflow/(?<id>[^/]+)").id) catch empty) // empty)
+            (
+              \$raw.value
+              // (try (\$raw.cachedResultUrl | strings | capture("/workflow/(?<id>[^/]+)").id) catch empty)
+              // empty
+            )
           else
             empty
           end;
@@ -60,7 +68,11 @@ def validateAndSelectSubWorkflowsForProd(String apiBaseUrl, String apiKeyCredId,
     return ''
   }
 
-  List<String> subWorkflowIds = rawSubWorkflowIds.readLines().collect { it.trim() }.findAll { it }
+  List<String> subWorkflowIds = rawSubWorkflowIds
+    .readLines()
+    .collect { it.trim() }
+    .findAll { it }
+
   echo "[DeploymentOps] Found sub-workflow reference(s): ${subWorkflowIds.join(', ')}"
 
   List<String> existingSubWorkflows = []
@@ -72,7 +84,7 @@ def validateAndSelectSubWorkflowsForProd(String apiBaseUrl, String apiKeyCredId,
       int httpCode = sh(
         script: """
           set -euo pipefail
-          curl -sS -o /dev/null -w '%{http_code}' \\
+          curl -k -sS -o /dev/null -w '%{http_code}' \\
             -H "X-N8N-API-KEY: \$PROD_N8N_API_KEY" \\
             "${apiBaseUrl}/workflows/${subId}"
         """,
@@ -117,31 +129,51 @@ Please share this output to DevOps team, setup missing sub-workflow(s), then rer
     ok: 'Confirm Sub-workflow Selection',
     parameters: selectionParams
   )
+
   echo "[DeploymentOps] Input result type: ${inputResult?.getClass()?.name ?: 'null'}; value: ${inputResult}"
 
+  List<String> selectedIds = []
+
+  /*
+   * Kalau Jenkins input hanya punya 1 Boolean parameter,
+   * hasil input kadang langsung Boolean, bukan Map.
+   */
   if (inputResult instanceof Boolean) {
-    return inputResult ? subWorkflowIds[0] : ''
+    if (inputResult == true && !subWorkflowIds.isEmpty()) {
+      selectedIds << subWorkflowIds[0]
+    }
   }
 
-  List<String> selectedIds = []
+  /*
+   * Kalau parameter lebih dari 1,
+   * hasil input normalnya Map/HashMap:
+   * [
+   *   PUSH_SUBWF_xxx:true,
+   *   PUSH_SUBWF_yyy:false
+   * ]
+   */
   if (inputResult instanceof Map) {
-    Map normalizedInput = [:]
     inputResult.each { key, value ->
       String keyStr = key?.toString()?.trim() ?: ''
-      normalizedInput[keyStr] = value
-    }
+      String valueStr = value?.toString()?.trim() ?: ''
 
-    normalizedInput.each { key, selectedRaw ->
-      if (!key.startsWith('PUSH_SUBWF_')) {
-        return
-      }
-      if (selectedRaw == true || selectedRaw?.toString()?.equalsIgnoreCase('true')) {
-        selectedIds << key.replaceFirst('^PUSH_SUBWF_', '').trim()
+      echo "[DeploymentOps] Checking input param: ${keyStr} = ${valueStr}"
+
+      if (keyStr.startsWith('PUSH_SUBWF_') && valueStr.equalsIgnoreCase('true')) {
+        String selectedId = keyStr.replaceFirst('^PUSH_SUBWF_', '').trim()
+
+        if (selectedId) {
+          selectedIds << selectedId
+        }
       }
     }
   }
 
-  return selectedIds.unique().join(',')
+  String selectedSubWorkflowIds = selectedIds.unique().join(',')
+
+  echo "[DeploymentOps] Selected sub-workflow IDs inside library: ${selectedSubWorkflowIds ?: '(none)'}"
+
+  return selectedSubWorkflowIds
 }
 
 def validateWorkflowCredentialsOnly(String gitCredId, String workflowId) {
