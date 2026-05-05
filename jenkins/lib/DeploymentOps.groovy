@@ -72,7 +72,7 @@ def validateAndSelectSubWorkflowsForProd(String apiBaseUrl, String apiKeyCredId,
       int httpCode = sh(
         script: """
           set -euo pipefail
-          curl -sS -o /dev/null -w '%{http_code}' \\
+          curl -k -sS -o /dev/null -w '%{http_code}' \\
             -H "X-N8N-API-KEY: \$PROD_N8N_API_KEY" \\
             "${apiBaseUrl}/workflows/${subId}"
         """,
@@ -149,7 +149,6 @@ def validateWorkflowCredentialsOnly(String gitCredId, String workflowId) {
       trap cleanup EXIT
 
       mkdir -p "\$VALIDATION_TMP_DIR"
-      cp scripts/validate-dev-credentials.sh "\$VALIDATION_MP_DIR/validate-dev-credentials.sh"
       chmod +x "\$VALIDATION_TMP_DIR/validate-dev-credentials.sh"
 
       git remote set-url origin "http://${GH_USER}:${GH_PASS}@atlassian.satnusa.com:7990/scm/dvo/n8n-cicd-workflows.git"
