@@ -51,11 +51,13 @@ def commitAndPushWorkflowOnly(String gitCredId, String workflowId, String select
       find . -mindepth 1 -maxdepth 1 ! -name '.git' ! -name 'workflows' -exec rm -rf {} +
       KEEP_FILES="${workflowId}.json"
       if [ -n "${selectedSubWorkflowIds}" ]; then
-        IFS=',' read -r -a _subs <<< "${selectedSubWorkflowIds}"
-        for _sid in "\${_subs[@]}"; do
+        OLD_IFS="$IFS"
+        IFS=','
+        for _sid in ${selectedSubWorkflowIds}; do
           _sid_trim=\"\$(echo \"\$_sid\" | xargs)\"
           [ -n "\$_sid_trim" ] && KEEP_FILES="\${KEEP_FILES},\${_sid_trim}.json"
         done
+        IFS="$OLD_IFS"
       fi
 
       find workflows -maxdepth 1 -type f -name '*.json' | while read -r f; do
@@ -103,11 +105,13 @@ def promoteWorkflowToMaster(String gitCredId, String workflowId, String selected
       git checkout -B master origin/master
       git checkout "origin/workflow/${workflowId}" -- "workflows/${workflowId}.json"
       if [ -n "${selectedSubWorkflowIds}" ]; then
-        IFS=',' read -r -a _subs <<< "${selectedSubWorkflowIds}"
-        for _sid in "\${_subs[@]}"; do
+        OLD_IFS="$IFS"
+        IFS=','
+        for _sid in ${selectedSubWorkflowIds}; do
           _sid_trim=\"\$(echo \"\$_sid\" | xargs)\"
           [ -n "\$_sid_trim" ] && git checkout "origin/workflow/${workflowId}" -- "workflows/\${_sid_trim}.json" || true
         done
+        IFS="$OLD_IFS"
       fi
 
       if git diff --quiet HEAD -- workflows/*.json; then
