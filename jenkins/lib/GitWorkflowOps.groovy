@@ -35,6 +35,8 @@ def prepareWorkflowBranch(String gitCredId, String workflowId) {
 }
 
 def commitAndPushWorkflowOnly(String gitCredId, String workflowId, String selectedSubWorkflowIds, String authorName, String authorEmail) {
+  String selectedSubWorkflowIdsArg = selectedSubWorkflowIds?.trim() ?: ''
+
   withCredentials([usernamePassword(
     credentialsId: gitCredId,
     usernameVariable: 'GH_USER',
@@ -50,14 +52,12 @@ def commitAndPushWorkflowOnly(String gitCredId, String workflowId, String select
 
       find . -mindepth 1 -maxdepth 1 ! -name '.git' ! -name 'workflows' -exec rm -rf {} +
       KEEP_FILES="${workflowId}.json"
-      if [ -n "${selectedSubWorkflowIds}" ]; then
-        OLD_IFS="\$IFS"
-        IFS=','
-        for _sid in ${selectedSubWorkflowIds}; do
+      if [ -n "${selectedSubWorkflowIdsArg}" ]; then
+        SUB_IDS_NORMALIZED="\$(echo "${selectedSubWorkflowIdsArg}" | tr ',\\n\\r\\t' '    ')"
+        for _sid in \$SUB_IDS_NORMALIZED; do
           _sid_trim=\"\$(echo \"\$_sid\" | xargs)\"
           [ -n "\$_sid_trim" ] && KEEP_FILES="\${KEEP_FILES},\${_sid_trim}.json"
         done
-        IFS="\$OLD_IFS"
       fi
 
       find workflows -maxdepth 1 -type f -name '*.json' | while read -r f; do
@@ -88,6 +88,8 @@ def commitAndPushWorkflowOnly(String gitCredId, String workflowId, String select
 }
 
 def promoteWorkflowToMaster(String gitCredId, String workflowId, String selectedSubWorkflowIds, String authorName, String authorEmail) {
+  String selectedSubWorkflowIdsArg = selectedSubWorkflowIds?.trim() ?: ''
+
   withCredentials([usernamePassword(
     credentialsId: gitCredId,
     usernameVariable: 'GH_USER',
@@ -104,14 +106,12 @@ def promoteWorkflowToMaster(String gitCredId, String workflowId, String selected
       git fetch origin master "workflow/${workflowId}"
       git checkout -B master origin/master
       git checkout "origin/workflow/${workflowId}" -- "workflows/${workflowId}.json"
-      if [ -n "${selectedSubWorkflowIds}" ]; then
-        OLD_IFS="\$IFS"
-        IFS=','
-        for _sid in ${selectedSubWorkflowIds}; do
+      if [ -n "${selectedSubWorkflowIdsArg}" ]; then
+        SUB_IDS_NORMALIZED="\$(echo "${selectedSubWorkflowIdsArg}" | tr ',\\n\\r\\t' '    ')"
+        for _sid in \$SUB_IDS_NORMALIZED; do
           _sid_trim=\"\$(echo \"\$_sid\" | xargs)\"
           [ -n "\$_sid_trim" ] && git checkout "origin/workflow/${workflowId}" -- "workflows/\${_sid_trim}.json" || true
         done
-        IFS="\$OLD_IFS"
       fi
 
       if git diff --quiet HEAD -- workflows/*.json; then
