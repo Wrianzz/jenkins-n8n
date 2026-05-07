@@ -4,6 +4,7 @@ set -euo pipefail
 WORKFLOW_ID="${1:?usage: validate-dev-credentials.sh <WORKFLOW_ID> [WORKFLOW_FILE] [SUB_WORKFLOW_IDS_CSV]}"
 WORKFLOW_FILE="${2:-workflows/${WORKFLOW_ID}.json}"
 SUB_WORKFLOW_IDS_CSV="${3:-}"
+HAS_INVALID=0
 
 if [[ ! -f "$WORKFLOW_FILE" ]]; then
   echo "[ERR] Workflow file not found in checked-out branch: $WORKFLOW_FILE"
@@ -38,10 +39,12 @@ if [[ -n "$INVALID_CREDENTIAL_NODES" ]]; then
   echo "[ERR] Found non-production credential name(s)."
   echo "[ERR] Every credential in workflow must use the format: <Nama-kredensial>-Production (case-insensitive)."
   echo "$INVALID_CREDENTIAL_NODES"
-  exit 1
+  HAS_INVALID=1
 fi
 
-echo "[OK] All node credentials already use suffix -Production (case-insensitive)."
+if [[ "$HAS_INVALID" -eq 0 ]]; then
+  echo "[OK] All node credentials already use suffix -Production (case-insensitive)."
+fi
 
 if [[ -n "$SUB_WORKFLOW_IDS_CSV" ]]; then
   # Support both comma-separated and whitespace-separated IDs from callers.
@@ -83,8 +86,14 @@ if [[ -n "$SUB_WORKFLOW_IDS_CSV" ]]; then
     if [[ -n "$INVALID_SUB_CREDENTIAL_NODES" ]]; then
       echo "[ERR] Found non-production credential name(s) in sub-workflow ${sub_id}."
       echo "$INVALID_SUB_CREDENTIAL_NODES"
-      exit 1
+      HAS_INVALID=1
+      continue
     fi
     echo "[OK] Sub-workflow ${sub_id} credentials valid."
   done
+fi
+
+if [[ "$HAS_INVALID" -ne 0 ]]; then
+  echo "[ERR] Validation failed because one or more credentials are not using suffix -Production."
+  exit 1
 fi
