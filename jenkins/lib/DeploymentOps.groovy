@@ -107,9 +107,8 @@ def validateWorkflowCredentialsOnly(String gitCredId, String workflowId, String 
       fi
 
       if [ -n "${selectedSubWorkflowIdsArg}" ]; then
-        OLD_IFS="\$IFS"
-        IFS=','
-        for _sid in ${selectedSubWorkflowIdsArg}; do
+        SUB_IDS_NORMALIZED="\$(echo "${selectedSubWorkflowIdsArg}" | tr ',\\n\\r\\t' '    ')"
+        for _sid in \$SUB_IDS_NORMALIZED; do
           _sid_trim="\$(echo "\$_sid" | xargs)"
           [ -n "\$_sid_trim" ] || continue
 
@@ -121,7 +120,6 @@ def validateWorkflowCredentialsOnly(String gitCredId, String workflowId, String 
             echo "[WARN] Branch workflow/\${_sid_trim} not found; validating using checked-out files only"
           fi
         done
-        IFS="\$OLD_IFS"
       fi
 
       "\$VALIDATION_TMP_DIR/validate-dev-credentials.sh" "${workflowId}" "workflows/${workflowId}.json" "${selectedSubWorkflowIdsArg}"
