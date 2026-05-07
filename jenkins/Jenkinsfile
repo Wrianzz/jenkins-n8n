@@ -125,6 +125,10 @@ pipeline {
       }
       steps {
         script {
+          if (!env.SELECTED_SUBWORKFLOW_IDS?.trim()) {
+            env.SELECTED_SUBWORKFLOW_IDS = DeploymentOps.discoverSubWorkflowIdsFromFile(env.WORKFLOW_ID) ?: ''
+            echo "Auto-discovered sub-workflow IDs for validation/deploy: ${env.SELECTED_SUBWORKFLOW_IDS ?: '(none)'}"
+          }
           DeploymentOps.validateWorkflowCredentialsOnly(env.GIT_CRED_ID, env.WORKFLOW_ID, env.SELECTED_SUBWORKFLOW_IDS ?: '')
         }
       }
