@@ -167,6 +167,8 @@ pipeline {
           env.SELECTED_SUBWORKFLOW_IDS = selectedSubWorkflowIds
           
           echo "Selected sub-workflow IDs to push: ${env.SELECTED_SUBWORKFLOW_IDS ?: '(none)'}"
+          echo "Returned selectedSubWorkflowIds: '${selectedSubWorkflowIds}'"
+          echo "Env SELECTED_SUBWORKFLOW_IDS: '${env.SELECTED_SUBWORKFLOW_IDS}'"
         }
       }
     }
