@@ -39,8 +39,8 @@ echo "[4] Done: ${OUT_DIR}/${WORKFLOW_ID}.json"
 
 if [[ -n "$SUB_WORKFLOW_IDS_CSV" ]]; then
   echo "[5] Export selected sub-workflow(s): $SUB_WORKFLOW_IDS_CSV"
-  IFS=',' read -r -a SUB_WORKFLOW_IDS <<< "$SUB_WORKFLOW_IDS_CSV"
-  for sub_id_raw in "${SUB_WORKFLOW_IDS[@]}"; do
+  SUB_WORKFLOW_IDS_NORMALIZED="$(echo "$SUB_WORKFLOW_IDS_CSV" | tr ',\n\r\t' '    ')"
+  for sub_id_raw in $SUB_WORKFLOW_IDS_NORMALIZED; do
     sub_id="$(echo "$sub_id_raw" | xargs)"
     [[ -n "$sub_id" ]] || continue
 

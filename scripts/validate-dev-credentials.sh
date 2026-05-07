@@ -37,8 +37,9 @@ fi
 echo "[OK] All node credentials already use suffix -Production (case-insensitive)."
 
 if [[ -n "$SUB_WORKFLOW_IDS_CSV" ]]; then
-  IFS=',' read -r -a SUB_WORKFLOW_IDS <<< "$SUB_WORKFLOW_IDS_CSV"
-  for sub_id_raw in "${SUB_WORKFLOW_IDS[@]}"; do
+  # Support both comma-separated and whitespace-separated IDs from callers.
+  SUB_WORKFLOW_IDS_NORMALIZED="$(echo "$SUB_WORKFLOW_IDS_CSV" | tr ',\n\r\t' '    ')"
+  for sub_id_raw in $SUB_WORKFLOW_IDS_NORMALIZED; do
     sub_id="$(echo "$sub_id_raw" | xargs)"
     [[ -n "$sub_id" ]] || continue
 
