@@ -72,6 +72,8 @@ def deployFromRepoToProd(String sshCredId, String workflowId, String selectedSub
 }
 
 def validateWorkflowCredentialsOnly(String gitCredId, String workflowId, String selectedSubWorkflowIds = '') {
+  String selectedSubWorkflowIdsArg = selectedSubWorkflowIds?.trim() ?: ''
+
   withCredentials([
     usernamePassword(
       credentialsId: gitCredId,
@@ -104,7 +106,23 @@ def validateWorkflowCredentialsOnly(String gitCredId, String workflowId, String 
         exit 1
       fi
 
-      "\$VALIDATION_TMP_DIR/validate-dev-credentials.sh" "${workflowId}" "workflows/${workflowId}.json" "${selectedSubWorkflowIds}"
+      if [ -n "${selectedSubWorkflowIdsArg}" ]; then
+        SUB_IDS_NORMALIZED="\$(echo "${selectedSubWorkflowIdsArg}" | tr ',\\n\\r\\t' '    ')"
+        for _sid in \$SUB_IDS_NORMALIZED; do
+          _sid_trim="\$(echo "\$_sid" | xargs)"
+          [ -n "\$_sid_trim" ] || continue
+
+          if git ls-remote --exit-code --heads origin "workflow/\${_sid_trim}" >/dev/null 2>&1; then
+            git fetch origin "workflow/\${_sid_trim}"
+            git checkout "origin/workflow/\${_sid_trim}" -- "workflows/\${_sid_trim}.json"
+            echo "[INFO] Loaded sub-workflow file from branch workflow/\${_sid_trim}"
+          else
+            echo "[WARN] Branch workflow/\${_sid_trim} not found; validating using checked-out files only"
+          fi
+        done
+      fi
+
+      "\$VALIDATION_TMP_DIR/validate-dev-credentials.sh" "${workflowId}" "workflows/${workflowId}.json" "${selectedSubWorkflowIdsArg}"
     """
   }
 }
