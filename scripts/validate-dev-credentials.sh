@@ -11,7 +11,7 @@ if [[ ! -f "$WORKFLOW_FILE" ]]; then
 fi
 
 echo "[START] Validate workflow credentials naming from branch file"
-if ! INVALID_CREDENTIAL_NODES="$(jq -r '
+if ! WORKFLOW_CREDENTIAL_REPORT="$(jq -r '
   def workflow_objects:
     if type == "array" then .[] else . end;
 
@@ -20,13 +20,20 @@ if ! INVALID_CREDENTIAL_NODES="$(jq -r '
   | select((.credentials? | type) == "object") as $node
   | ($node.credentials | to_entries[]?) as $cred
   | ($cred.value.name // "") as $credName
-  | select(($credName | test("-production$"; "i")) | not)
-  | "- node=\($node.name // "<unnamed>") credentialType=\($cred.key) credentialName=\($credName)"
+  | "status=\((if ($credName | test("-production$"; "i")) then "OK" else "INVALID" end)) node=\($node.name // "<unnamed>") credentialType=\($cred.key) credentialName=\($credName)"
 ' "$WORKFLOW_FILE")"; then
   echo "[ERR] Failed to parse workflow JSON structure while validating credentials: $WORKFLOW_FILE"
   exit 1
 fi
 
+echo "[INFO] Workflow credential report:"
+if [[ -n "$WORKFLOW_CREDENTIAL_REPORT" ]]; then
+  echo "$WORKFLOW_CREDENTIAL_REPORT"
+else
+  echo "[INFO] No credential nodes found in workflow."
+fi
+
+INVALID_CREDENTIAL_NODES="$(echo "$WORKFLOW_CREDENTIAL_REPORT" | awk '/^status=INVALID /')"
 if [[ -n "$INVALID_CREDENTIAL_NODES" ]]; then
   echo "[ERR] Found non-production credential name(s)."
   echo "[ERR] Every credential in workflow must use the format: <Nama-kredensial>-Production (case-insensitive)."
@@ -50,7 +57,7 @@ if [[ -n "$SUB_WORKFLOW_IDS_CSV" ]]; then
     fi
 
     echo "[START] Validate sub-workflow credentials naming: ${sub_id}"
-    if ! INVALID_SUB_CREDENTIAL_NODES="$(jq -r '
+    if ! SUB_CREDENTIAL_REPORT="$(jq -r '
       def workflow_objects:
         if type == "array" then .[] else . end;
 
@@ -59,13 +66,20 @@ if [[ -n "$SUB_WORKFLOW_IDS_CSV" ]]; then
       | select((.credentials? | type) == "object") as $node
       | ($node.credentials | to_entries[]?) as $cred
       | ($cred.value.name // "") as $credName
-      | select(($credName | test("-production$"; "i")) | not)
-      | "- node=\($node.name // "<unnamed>") credentialType=\($cred.key) credentialName=\($credName)"
+      | "status=\((if ($credName | test("-production$"; "i")) then "OK" else "INVALID" end)) node=\($node.name // "<unnamed>") credentialType=\($cred.key) credentialName=\($credName)"
     ' "$sub_file")"; then
       echo "[ERR] Failed to parse workflow JSON structure while validating credentials: $sub_file"
       exit 1
     fi
 
+    echo "[INFO] Sub-workflow ${sub_id} credential report:"
+    if [[ -n "$SUB_CREDENTIAL_REPORT" ]]; then
+      echo "$SUB_CREDENTIAL_REPORT"
+    else
+      echo "[INFO] No credential nodes found in sub-workflow ${sub_id}."
+    fi
+
+    INVALID_SUB_CREDENTIAL_NODES="$(echo "$SUB_CREDENTIAL_REPORT" | awk '/^status=INVALID /')"
     if [[ -n "$INVALID_SUB_CREDENTIAL_NODES" ]]; then
       echo "[ERR] Found non-production credential name(s) in sub-workflow ${sub_id}."
       echo "$INVALID_SUB_CREDENTIAL_NODES"
