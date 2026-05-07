@@ -27,17 +27,9 @@ if ! WORKFLOW_CREDENTIAL_REPORT="$(jq -r '
   exit 1
 fi
 
-echo "[INFO] Workflow credential report:"
-if [[ -n "$WORKFLOW_CREDENTIAL_REPORT" ]]; then
-  echo "$WORKFLOW_CREDENTIAL_REPORT"
-else
-  echo "[INFO] No credential nodes found in workflow."
-fi
-
 INVALID_CREDENTIAL_NODES="$(echo "$WORKFLOW_CREDENTIAL_REPORT" | awk '/^status=INVALID /')"
 if [[ -n "$INVALID_CREDENTIAL_NODES" ]]; then
-  echo "[ERR] Found non-production credential name(s)."
-  echo "[ERR] Every credential in workflow must use the format: <Nama-kredensial>-Production (case-insensitive)."
+  echo "[WARN] Found non-production credential name(s) in workflow ${WORKFLOW_ID}."
   echo "$INVALID_CREDENTIAL_NODES"
   HAS_INVALID=1
 fi
@@ -75,16 +67,9 @@ if [[ -n "$SUB_WORKFLOW_IDS_CSV" ]]; then
       exit 1
     fi
 
-    echo "[INFO] Sub-workflow ${sub_id} credential report:"
-    if [[ -n "$SUB_CREDENTIAL_REPORT" ]]; then
-      echo "$SUB_CREDENTIAL_REPORT"
-    else
-      echo "[INFO] No credential nodes found in sub-workflow ${sub_id}."
-    fi
-
     INVALID_SUB_CREDENTIAL_NODES="$(echo "$SUB_CREDENTIAL_REPORT" | awk '/^status=INVALID /')"
     if [[ -n "$INVALID_SUB_CREDENTIAL_NODES" ]]; then
-      echo "[ERR] Found non-production credential name(s) in sub-workflow ${sub_id}."
+      echo "[WARN] Found non-production credential name(s) in sub-workflow ${sub_id}."
       echo "$INVALID_SUB_CREDENTIAL_NODES"
       HAS_INVALID=1
       continue
