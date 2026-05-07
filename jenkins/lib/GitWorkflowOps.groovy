@@ -52,7 +52,7 @@ def commitAndPushWorkflowOnly(String gitCredId, String workflowId, String select
       KEEP_FILES="${workflowId}.json"
       if [ -n "${selectedSubWorkflowIds}" ]; then
         IFS=',' read -r -a _subs <<< "${selectedSubWorkflowIds}"
-        for _sid in "${_subs[@]}"; do
+        for _sid in "\${_subs[@]}"; do
           _sid_trim=\"\$(echo \"\$_sid\" | xargs)\"
           [ -n "\$_sid_trim" ] && KEEP_FILES="\${KEEP_FILES},\${_sid_trim}.json"
         done
@@ -60,9 +60,9 @@ def commitAndPushWorkflowOnly(String gitCredId, String workflowId, String select
 
       find workflows -maxdepth 1 -type f -name '*.json' | while read -r f; do
         b=\"\$(basename \"$f\")\"
-        case ",$KEEP_FILES," in
+        case ",\$KEEP_FILES," in
           *,\"$b\",*) ;;
-          *) rm -f "$f" ;;
+          *) rm -f "\$f" ;;
         esac
       done
 
@@ -104,7 +104,7 @@ def promoteWorkflowToMaster(String gitCredId, String workflowId, String selected
       git checkout "origin/workflow/${workflowId}" -- "workflows/${workflowId}.json"
       if [ -n "${selectedSubWorkflowIds}" ]; then
         IFS=',' read -r -a _subs <<< "${selectedSubWorkflowIds}"
-        for _sid in "${_subs[@]}"; do
+        for _sid in "\${_subs[@]}"; do
           _sid_trim=\"\$(echo \"\$_sid\" | xargs)\"
           [ -n "\$_sid_trim" ] && git checkout "origin/workflow/${workflowId}" -- "workflows/\${_sid_trim}.json" || true
         done
