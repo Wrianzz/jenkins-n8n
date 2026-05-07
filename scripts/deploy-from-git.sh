@@ -86,8 +86,8 @@ echo "[0] Validate workflow credentials naming"
 validate_credential_suffix "$WF_FILE"
 
 if [[ -n "${SUB_WORKFLOW_IDS_CSV:-}" ]]; then
-  IFS=',' read -r -a SUB_WORKFLOW_IDS <<< "$SUB_WORKFLOW_IDS_CSV"
-  for sub_id_raw in "${SUB_WORKFLOW_IDS[@]}"; do
+  SUB_WORKFLOW_IDS_NORMALIZED="$(echo "$SUB_WORKFLOW_IDS_CSV" | tr ',\n\r\t' '    ')"
+  for sub_id_raw in $SUB_WORKFLOW_IDS_NORMALIZED; do
     sub_id="$(echo "$sub_id_raw" | xargs)"
     [[ -n "$sub_id" ]] || continue
 
@@ -124,8 +124,8 @@ if [[ "${#MAIN_CRED_IDS[@]}" -gt 0 ]]; then
 fi
 
 if [[ -n "${SUB_WORKFLOW_IDS_CSV:-}" ]]; then
-  IFS=',' read -r -a SUB_WORKFLOW_IDS <<< "$SUB_WORKFLOW_IDS_CSV"
-  for sub_id_raw in "${SUB_WORKFLOW_IDS[@]}"; do
+  SUB_WORKFLOW_IDS_NORMALIZED="$(echo "$SUB_WORKFLOW_IDS_CSV" | tr ',\n\r\t' '    ')"
+  for sub_id_raw in $SUB_WORKFLOW_IDS_NORMALIZED; do
     sub_id="$(echo "$sub_id_raw" | xargs)"
     [[ -n "$sub_id" ]] || continue
 
@@ -158,8 +158,8 @@ fi
 echo "[3] Transfer and import workflow to PROD"
 
 if [[ -n "${SUB_WORKFLOW_IDS_CSV:-}" ]]; then
-  IFS=',' read -r -a SUB_WORKFLOW_IDS <<< "$SUB_WORKFLOW_IDS_CSV"
-  for sub_id_raw in "${SUB_WORKFLOW_IDS[@]}"; do
+  SUB_WORKFLOW_IDS_NORMALIZED="$(echo "$SUB_WORKFLOW_IDS_CSV" | tr ',\n\r\t' '    ')"
+  for sub_id_raw in $SUB_WORKFLOW_IDS_NORMALIZED; do
     sub_id="$(echo "$sub_id_raw" | xargs)"
     [[ -n "$sub_id" ]] || continue
 
