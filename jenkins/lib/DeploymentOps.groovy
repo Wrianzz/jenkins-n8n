@@ -53,6 +53,24 @@ def discoverAndSelectSubWorkflows(String workflowId) {
   return selectedIds.unique().join(',')
 }
 
+def discoverSubWorkflowIdsFromFile(String workflowId) {
+  String workflowFile = "workflows/${workflowId}.json"
+  return sh(
+    script: """
+      set -euo pipefail
+      jq -r '
+        def wf_objs: if type == "array" then .[] else . end;
+        wf_objs
+        | .nodes[]?
+        | select((.type // "") | test("executeWorkflow"; "i"))
+        | (.parameters.workflowId // .parameters.workflow?.id // empty)
+        | if type == "string" then . elif type == "object" then (.value // empty) else empty end
+      ' '${workflowFile}' | awk 'NF' | sort -u | paste -sd ',' -
+    """,
+    returnStdout: true
+  ).trim()
+}
+
 def deployFromRepoToProd(String sshCredId, String workflowId, String selectedSubWorkflowIds = '') {
   String selectedSubWorkflowIdsArg = selectedSubWorkflowIds?.trim() ?: ''
 
