@@ -1,6 +1,6 @@
 // vars/deployOps.groovy
 
-def exportWorkflowFromDev(String sshCredId, String workflowId) {
+def exportWorkflowFromDev(String sshCredId, String workflowId, String selectedSubWorkflowIds = '') {
   withCredentials([sshUserPrivateKey(
     credentialsId: sshCredId,
     keyFileVariable: 'SSH_KEY_FILE'
@@ -9,9 +9,48 @@ def exportWorkflowFromDev(String sshCredId, String workflowId) {
       set -e
       chmod +x scripts/export-to-git.sh
       export SSH_KEY_FILE
-      scripts/export-to-git.sh "${workflowId}"
+      scripts/export-to-git.sh "${workflowId}" "${selectedSubWorkflowIds}"
     """
   }
+}
+
+def discoverAndSelectSubWorkflows(String workflowId) {
+  String workflowFile = "workflows/${workflowId}.json"
+  String rawSubWorkflowIds = sh(
+    script: """
+      set -euo pipefail
+      jq -r '
+        def wf_objs: if type == "array" then .[] else . end;
+        wf_objs
+        | .nodes[]?
+        | select((.type // "") | test("executeWorkflow"; "i"))
+        | (.parameters.workflowId // .parameters.workflow?.id // empty)
+        | if type == "string" then . elif type == "object" then (.value // empty) else empty end
+      ' '${workflowFile}' | awk 'NF' | sort -u
+    """,
+    returnStdout: true
+  ).trim()
+
+  if (!rawSubWorkflowIds) return ''
+  List<String> subWorkflowIds = rawSubWorkflowIds.readLines().collect { it.trim() }.findAll { it }
+
+  List selectionParams = subWorkflowIds.collect { subId ->
+    [$class: 'BooleanParameterDefinition', name: "PUSH_SUBWF_${subId}", defaultValue: false, description: "Include sub-workflow ${subId} in repo/prod push"]
+  }
+  def inputResult = input(id: "subworkflow-selection-${env.BUILD_NUMBER}", message: "Select sub-workflow(s) to include before approval", ok: 'Confirm', parameters: selectionParams)
+
+  List<String> selectedIds = []
+  if (inputResult instanceof Boolean) {
+    if (inputResult == true && !subWorkflowIds.isEmpty()) selectedIds << subWorkflowIds[0]
+  }
+  if (inputResult instanceof Map) {
+    inputResult.each { key, value ->
+      if (key?.toString()?.startsWith('PUSH_SUBWF_') && value?.toString()?.equalsIgnoreCase('true')) {
+        selectedIds << key.toString().replaceFirst('^PUSH_SUBWF_', '').trim()
+      }
+    }
+  }
+  return selectedIds.unique().join(',')
 }
 
 def deployFromRepoToProd(String sshCredId, String workflowId, String selectedSubWorkflowIds = '') {
@@ -32,151 +71,7 @@ def deployFromRepoToProd(String sshCredId, String workflowId, String selectedSub
   }
 }
 
-def validateAndSelectSubWorkflowsForProd(String apiBaseUrl, String apiKeyCredId, String workflowId) {
-  String workflowFile = "workflows/${workflowId}.json"
-
-  String rawSubWorkflowIds = sh(
-    script: """
-      set -euo pipefail
-      jq -r '
-        def wf_objs: if type == "array" then .[] else . end;
-        def extract_subwf_id(\$raw):
-          if (\$raw | type) == "string" then
-            \$raw
-          elif (\$raw | type) == "object" then
-            (
-              \$raw.value
-              // (try (\$raw.cachedResultUrl | strings | capture("/workflow/(?<id>[^/]+)").id) catch empty)
-              // empty
-            )
-          else
-            empty
-          end;
-
-        wf_objs
-        | .nodes[]?
-        | select((.type // "") | test("executeWorkflow"; "i"))
-        | (.parameters.workflowId // .parameters.workflow?.id // empty) as \$rawRef
-        | extract_subwf_id(\$rawRef)
-      ' '${workflowFile}' | awk 'NF' | sort -u
-    """,
-    returnStdout: true
-  ).trim()
-
-  if (!rawSubWorkflowIds) {
-    echo "[DeploymentOps] Workflow ${workflowId} does not depend on sub-workflow. Continue as usual."
-    return ''
-  }
-
-  List<String> subWorkflowIds = rawSubWorkflowIds
-    .readLines()
-    .collect { it.trim() }
-    .findAll { it }
-
-  echo "[DeploymentOps] Found sub-workflow reference(s): ${subWorkflowIds.join(', ')}"
-
-  List<String> existingSubWorkflows = []
-  List<String> missingSubWorkflows = []
-  List<String> erroredSubWorkflows = []
-
-  withCredentials([string(credentialsId: apiKeyCredId, variable: 'PROD_N8N_API_KEY')]) {
-    for (String subId : subWorkflowIds) {
-      int httpCode = sh(
-        script: """
-          set -euo pipefail
-          curl -k -sS -o /dev/null -w '%{http_code}' \\
-            -H "X-N8N-API-KEY: \$PROD_N8N_API_KEY" \\
-            "${apiBaseUrl}/workflows/${subId}"
-        """,
-        returnStdout: true
-      ).trim().toInteger()
-
-      if (httpCode == 200) {
-        existingSubWorkflows << subId
-      } else if (httpCode == 404) {
-        missingSubWorkflows << subId
-      } else {
-        erroredSubWorkflows << "${subId} (HTTP ${httpCode})"
-      }
-    }
-  }
-
-  echo "[DeploymentOps] Sub-workflow status on production:"
-  echo "  - EXISTS (${existingSubWorkflows.size()}): ${existingSubWorkflows ? existingSubWorkflows.join(', ') : '-'}"
-  echo "  - MISSING (${missingSubWorkflows.size()}): ${missingSubWorkflows ? missingSubWorkflows.join(', ') : '-'}"
-  echo "  - ERROR (${erroredSubWorkflows.size()}): ${erroredSubWorkflows ? erroredSubWorkflows.join(', ') : '-'}"
-
-  if (!missingSubWorkflows.isEmpty() || !erroredSubWorkflows.isEmpty()) {
-    error("""[ABORT] Sub-workflow validation failed.
-EXISTS: ${existingSubWorkflows ? existingSubWorkflows.join(', ') : '-'}
-MISSING: ${missingSubWorkflows ? missingSubWorkflows.join(', ') : '-'}
-ERROR: ${erroredSubWorkflows ? erroredSubWorkflows.join(', ') : '-'}
-Please share this output to DevOps team, setup missing sub-workflow(s), then rerun this pipeline.""")
-  }
-
-  List selectionParams = subWorkflowIds.collect { subId ->
-    [
-      $class: 'BooleanParameterDefinition',
-      name: "PUSH_SUBWF_${subId}",
-      defaultValue: false,
-      description: "Push sub-workflow ${subId} to production"
-    ]
-  }
-
-  def inputResult = input(
-    id: "subworkflow-selection-${env.BUILD_NUMBER}",
-    message: "Sub-workflow found for main workflow ${workflowId}. Choose sub-workflow(s) to also push to production (optional).",
-    ok: 'Confirm Sub-workflow Selection',
-    parameters: selectionParams
-  )
-
-  echo "[DeploymentOps] Input result type: ${inputResult?.getClass()?.name ?: 'null'}; value: ${inputResult}"
-
-  List<String> selectedIds = []
-
-  /*
-   * Kalau Jenkins input hanya punya 1 Boolean parameter,
-   * hasil input kadang langsung Boolean, bukan Map.
-   */
-  if (inputResult instanceof Boolean) {
-    if (inputResult == true && !subWorkflowIds.isEmpty()) {
-      selectedIds << subWorkflowIds[0]
-    }
-  }
-
-  /*
-   * Kalau parameter lebih dari 1,
-   * hasil input normalnya Map/HashMap:
-   * [
-   *   PUSH_SUBWF_xxx:true,
-   *   PUSH_SUBWF_yyy:false
-   * ]
-   */
-  if (inputResult instanceof Map) {
-    inputResult.each { key, value ->
-      String keyStr = key?.toString()?.trim() ?: ''
-      String valueStr = value?.toString()?.trim() ?: ''
-
-      echo "[DeploymentOps] Checking input param: ${keyStr} = ${valueStr}"
-
-      if (keyStr.startsWith('PUSH_SUBWF_') && valueStr.equalsIgnoreCase('true')) {
-        String selectedId = keyStr.replaceFirst('^PUSH_SUBWF_', '').trim()
-
-        if (selectedId) {
-          selectedIds << selectedId
-        }
-      }
-    }
-  }
-
-  String selectedSubWorkflowIds = selectedIds.unique().join(',')
-
-  echo "[DeploymentOps] Selected sub-workflow IDs inside library: ${selectedSubWorkflowIds ?: '(none)'}"
-
-  return selectedSubWorkflowIds
-}
-
-def validateWorkflowCredentialsOnly(String gitCredId, String workflowId) {
+def validateWorkflowCredentialsOnly(String gitCredId, String workflowId, String selectedSubWorkflowIds = '') {
   withCredentials([
     usernamePassword(
       credentialsId: gitCredId,
@@ -209,7 +104,7 @@ def validateWorkflowCredentialsOnly(String gitCredId, String workflowId) {
         exit 1
       fi
 
-      "\$VALIDATION_TMP_DIR/validate-dev-credentials.sh" "${workflowId}" "workflows/${workflowId}.json"
+      "\$VALIDATION_TMP_DIR/validate-dev-credentials.sh" "${workflowId}" "workflows/${workflowId}.json" "${selectedSubWorkflowIds}"
     """
   }
 }
