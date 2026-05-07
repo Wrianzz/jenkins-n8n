@@ -34,7 +34,7 @@ def prepareWorkflowBranch(String gitCredId, String workflowId) {
   }
 }
 
-def commitAndPushWorkflowOnly(String gitCredId, String workflowId, String authorName, String authorEmail) {
+def commitAndPushWorkflowOnly(String gitCredId, String workflowId, String selectedSubWorkflowIds, String authorName, String authorEmail) {
   withCredentials([usernamePassword(
     credentialsId: gitCredId,
     usernameVariable: 'GH_USER',
@@ -49,7 +49,22 @@ def commitAndPushWorkflowOnly(String gitCredId, String workflowId, String author
       git config user.name  "${authorName}"
 
       find . -mindepth 1 -maxdepth 1 ! -name '.git' ! -name 'workflows' -exec rm -rf {} +
-      find workflows -maxdepth 1 -type f -name '*.json' ! -name "${workflowId}.json" -delete || true
+      KEEP_FILES="${workflowId}.json"
+      if [ -n "${selectedSubWorkflowIds}" ]; then
+        IFS=',' read -r -a _subs <<< "${selectedSubWorkflowIds}"
+        for _sid in "${_subs[@]}"; do
+          _sid_trim=\"\$(echo \"\$_sid\" | xargs)\"
+          [ -n "\$_sid_trim" ] && KEEP_FILES="\${KEEP_FILES},\${_sid_trim}.json"
+        done
+      fi
+
+      find workflows -maxdepth 1 -type f -name '*.json' | while read -r f; do
+        b=\"\$(basename \"$f\")\"
+        case ",$KEEP_FILES," in
+          *,\"$b\",*) ;;
+          *) rm -f "$f" ;;
+        esac
+      done
 
       git add -A .
       if git diff --cached --quiet; then
@@ -70,7 +85,7 @@ def commitAndPushWorkflowOnly(String gitCredId, String workflowId, String author
   }
 }
 
-def promoteWorkflowToMaster(String gitCredId, String workflowId, String authorName, String authorEmail) {
+def promoteWorkflowToMaster(String gitCredId, String workflowId, String selectedSubWorkflowIds, String authorName, String authorEmail) {
   withCredentials([usernamePassword(
     credentialsId: gitCredId,
     usernameVariable: 'GH_USER',
@@ -87,12 +102,19 @@ def promoteWorkflowToMaster(String gitCredId, String workflowId, String authorNa
       git fetch origin master "workflow/${workflowId}"
       git checkout -B master origin/master
       git checkout "origin/workflow/${workflowId}" -- "workflows/${workflowId}.json"
+      if [ -n "${selectedSubWorkflowIds}" ]; then
+        IFS=',' read -r -a _subs <<< "${selectedSubWorkflowIds}"
+        for _sid in "${_subs[@]}"; do
+          _sid_trim=\"\$(echo \"\$_sid\" | xargs)\"
+          [ -n "\$_sid_trim" ] && git checkout "origin/workflow/${workflowId}" -- "workflows/\${_sid_trim}.json" || true
+        done
+      fi
 
-      if git diff --quiet HEAD -- "workflows/${workflowId}.json"; then
+      if git diff --quiet HEAD -- workflows/*.json; then
         echo "[INFO] workflows/${workflowId}.json already up to date in master"
       else
-        git add "workflows/${workflowId}.json"
-        git commit -m "promote workflow ${workflowId} from workflow branch to master"
+        git add workflows/*.json
+        git commit -m "promote workflow ${workflowId} and selected sub-workflows from workflow branch to master"
         git push origin HEAD:master
       fi
     """

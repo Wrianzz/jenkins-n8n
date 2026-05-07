@@ -41,6 +41,7 @@ pipeline {
 
     APPROVER = 'o.midiyanto, omidiyanto, fathur.morax'
     APPROVER_EMAIL = 'o.midiyanto@satnusa.com, omidiyanto7@gmail.com, arthurwiriansyah@gmail.com'
+    SELECTED_SUBWORKFLOW_IDS = ''
   }
 
   stages {
@@ -84,6 +85,20 @@ pipeline {
         }
       }
     }
+
+    stage('Select sub-workflow before approval') {
+      when {
+        expression { params.PIPELINE_MODE in ['DEV_TO_REPO', 'DEV_TO_PROD'] }
+      }
+      steps {
+        script {
+          env.SELECTED_SUBWORKFLOW_IDS = DeploymentOps.discoverAndSelectSubWorkflows(env.WORKFLOW_ID) ?: ''
+          if (env.SELECTED_SUBWORKFLOW_IDS?.trim()) {
+            DeploymentOps.exportWorkflowFromDev(env.SSH_CRED_ID, env.WORKFLOW_ID, env.SELECTED_SUBWORKFLOW_IDS)
+          }
+        }
+      }
+    }
     
     stage('Commit & push workflow file only') {
       when {
@@ -94,6 +109,7 @@ pipeline {
           GitWorkflowOps.commitAndPushWorkflowOnly(
             env.GIT_CRED_ID,
             env.WORKFLOW_ID,
+            env.SELECTED_SUBWORKFLOW_IDS ?: '',
             env.authorName,
             env.authorEmail
           )
@@ -109,7 +125,7 @@ pipeline {
       }
       steps {
         script {
-          DeploymentOps.validateWorkflowCredentialsOnly(env.GIT_CRED_ID, env.WORKFLOW_ID)
+          DeploymentOps.validateWorkflowCredentialsOnly(env.GIT_CRED_ID, env.WORKFLOW_ID, env.SELECTED_SUBWORKFLOW_IDS ?: '')
         }
       }
     }
@@ -145,30 +161,10 @@ pipeline {
           GitWorkflowOps.promoteWorkflowToMaster(
             env.GIT_CRED_ID,
             env.WORKFLOW_ID,
+            env.SELECTED_SUBWORKFLOW_IDS ?: '',
             env.authorName,
             env.authorEmail
           )
-        }
-      }
-    }
-
-    stage('Validate sub-workflow on production') {
-      when {
-        expression { params.PIPELINE_MODE in ['REPO_TO_PROD', 'DEV_TO_PROD'] }
-      }
-      steps {
-        script {
-          String selectedSubWorkflowIds = DeploymentOps.validateAndSelectSubWorkflowsForProd(
-              env.PROD_N8N_API_BASE_URL,
-              env.PROD_N8N_API_KEY_CRED_ID,
-              env.WORKFLOW_ID
-          ) ?: ''
-          
-          env.SELECTED_SUBWORKFLOW_IDS = selectedSubWorkflowIds
-          
-          echo "Selected sub-workflow IDs to push: ${env.SELECTED_SUBWORKFLOW_IDS ?: '(none)'}"
-          echo "Returned selectedSubWorkflowIds: '${selectedSubWorkflowIds}'"
-          echo "Env SELECTED_SUBWORKFLOW_IDS: '${env.SELECTED_SUBWORKFLOW_IDS}'"
         }
       }
     }
