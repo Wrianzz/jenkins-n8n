@@ -18,6 +18,7 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 WF_DIR="${REPO_ROOT}/workflows"
 EXTRACT_FILTER="${REPO_ROOT}/scripts/extract-cred-ids.jq"
 PROMOTE_SCRIPT="${REPO_ROOT}/scripts/promote-creds.sh"
+MAP_DIR="${REPO_ROOT}/workflows/credential-maps"
 
 PROD_REMOTE="${PROD_SSH_USER:+${PROD_SSH_USER}@}${PROD_SSH_HOST}"
 PROD_SSH_OPTS=( -p "$PROD_SSH_PORT" -o BatchMode=yes -o StrictHostKeyChecking=accept-new )
@@ -52,38 +53,95 @@ collect_cred_ids_from_file() {
   jq -r -f "$EXTRACT_FILTER" "$file_path" 2>/dev/null | awk 'NF' | sort -u
 }
 
-validate_credential_suffix() {
+apply_production_credential_map() {
   local file_path="$1"
+  local map_path="$2"
 
-  local invalid_nodes
-  if ! invalid_nodes="$(jq -r '
-    def workflow_objects:
-      if type == "array" then .[] else . end;
+  [[ -f "$map_path" ]] || { echo "[ERR] Credential map file not found: $map_path"; exit 1; }
 
-    workflow_objects
-    | .nodes[]?
-    | select((.credentials? | type) == "object") as $node
-    | ($node.credentials | to_entries[]?) as $cred
-    | ($cred.value.name // "") as $credName
-    | select(($credName | test("-production$"; "i")) | not)
-    | "- node=\($node.name // "<unnamed>") credentialType=\($cred.key) credentialName=\($credName)"
-  ' "$file_path")"; then
-    echo "[ERR] Failed to parse workflow JSON structure while validating credentials: $file_path"
+  local tmp_file
+  tmp_file="$(mktemp)"
+
+  if ! jq --argfile mapping "$map_path" '
+    def entries: ($mapping.entries // []);
+
+    def replace_node_credential($node; $entry):
+      if ($node.id == $entry.nodeId)
+      then
+        if (($node.credentials? | type) != "object") then
+          error("Node \($entry.nodeName) with id \($entry.nodeId) has no credentials object. Silakan hubungi tim DevOps.")
+        elif ($node.credentials[$entry.credentialType]? | type) != "object" then
+          error("Node \($entry.nodeName) with id \($entry.nodeId) missing credential type \($entry.credentialType). Silakan hubungi tim DevOps.")
+        else
+          $node
+          | .credentials[$entry.credentialType].id = $entry.credentialId
+          | .credentials[$entry.credentialType].name = $entry.credentialName
+        end
+      else $node end;
+
+    def replace_all($wf):
+      reduce entries[] as $entry ($wf;
+        .nodes = ((.nodes // []) | map(replace_node_credential(.; $entry)))
+      );
+
+    def validate_presence($wf):
+      reduce entries[] as $entry ([];
+        . + (if (($wf.nodes // []) | any(.id == $entry.nodeId)) then [] else [$entry] end)
+      );
+
+    if (type == "array") then
+      (map(replace_all(.))) as $result
+      | (reduce $result[] as $wf ([]; . + validate_presence($wf))) as $missing
+      | if ($missing | length) > 0 then
+          error("Node \($missing[0].nodeName) dengan id \($missing[0].nodeId) gaada. Silakan hubungi tim DevOps.")
+        else
+          $result
+        end
+    else
+      (replace_all(.)) as $result
+      | (validate_presence($result)) as $missing
+      | if ($missing | length) > 0 then
+          error("Node \($missing[0].nodeName) dengan id \($missing[0].nodeId) gaada. Silakan hubungi tim DevOps.")
+        else
+          $result
+        end
+    end
+  ' "$file_path" > "$tmp_file"; then
+    rm -f "$tmp_file"
+    echo "[ERR] Failed to apply credential map from $map_path to $file_path"
     exit 1
   fi
 
-  if [[ -n "$invalid_nodes" ]]; then
-    echo "[ERR] Found non-production credential name(s) in: $file_path"
-    echo "[ERR] Every credential in workflow must use the format: <Nama-kredensial>-Production (case-insensitive)."
-    echo "$invalid_nodes"
-    exit 1
-  fi
-
-  echo "    OK: credential names in $(basename "$file_path") use suffix -Production (case-insensitive)."
+  mv "$tmp_file" "$file_path"
+  echo "    OK: applied production credential map from $(basename "$map_path")"
 }
 
-echo "[0] Validate workflow credentials naming"
-validate_credential_suffix "$WF_FILE"
+validate_credential_map_schema() {
+  local map_path="$1"
+
+  if ! jq -e '
+    (.entries | type) == "array" and
+    (.entries | length) > 0 and
+    (all(.entries[];
+      (.nodeId | type) == "string" and (.nodeId | length) > 0 and
+      (.nodeName | type) == "string" and (.nodeName | length) > 0 and
+      (.credentialType | type) == "string" and (.credentialType | length) > 0 and
+      (.credentialName | type) == "string" and (.credentialName | length) > 0 and
+      (.credentialId | type) == "string" and (.credentialId | length) > 0
+    ))
+  ' "$map_path" >/dev/null; then
+    echo "[ERR] Invalid credential map schema: $map_path"
+    echo "[ERR] Expected format: {\"entries\":[{\"nodeId\":\"...\",\"nodeName\":\"...\",\"credentialType\":\"...\",\"credentialName\":\"...\",\"credentialId\":\"...\"}]}"
+    exit 1
+  fi
+  echo "    OK: credential map schema valid in $(basename "$map_path")"
+}
+
+MAP_FILE="${MAP_DIR}/$(basename "${WF_FILE%.json}").credentials.json"
+
+echo "[0] Validate and apply workflow credential mapping"
+validate_credential_map_schema "$MAP_FILE"
+apply_production_credential_map "$WF_FILE" "$MAP_FILE"
 
 if [[ -n "${SUB_WORKFLOW_IDS_CSV:-}" ]]; then
   IFS=',' read -r -a SUB_WORKFLOW_IDS <<< "$SUB_WORKFLOW_IDS_CSV"
@@ -97,7 +155,9 @@ if [[ -n "${SUB_WORKFLOW_IDS_CSV:-}" ]]; then
       continue
     fi
 
-    validate_credential_suffix "$sub_file"
+    sub_map_file="${MAP_DIR}/$(basename "${sub_file%.json}").credentials.json"
+    validate_credential_map_schema "$sub_map_file"
+    apply_production_credential_map "$sub_file" "$sub_map_file"
   done
 fi
 
