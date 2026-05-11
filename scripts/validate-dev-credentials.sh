@@ -40,27 +40,30 @@ validate_workflow_nodes_against_map() {
   if ! jq -e --slurpfile mapping "$map_file" '
     def entries: (($mapping[0] // {}) | .entries // []);
 
+    def wf_nodes:
+      if type == "array" then
+        [ .[] | .nodes[]? ]
+      else
+        [ .nodes[]? ]
+      end;
+
     def node_exists($node_id):
-      ((.nodes // []) | any(.id == $node_id));
+      (wf_nodes | any(.id == $node_id));
 
     def cred_exists($node_id; $cred_type):
-      ((.nodes // [])
+      (wf_nodes
        | map(select(.id == $node_id))[0]
        | (.credentials? | type) == "object" and ((.credentials[$cred_type]? | type) == "object"));
 
-    if type == "array" then
-      error("Array workflow format is not supported in validation script. Silakan hubungi tim DevOps.")
-    else
-      reduce entries[] as $entry (true;
-        if (node_exists($entry.nodeId) | not) then
-          error("Node \($entry.nodeName) dengan id \($entry.nodeId) gaada. Silakan hubungi tim DevOps.")
-        elif (cred_exists($entry.nodeId; $entry.credentialType) | not) then
-          error("Node \($entry.nodeName) dengan id \($entry.nodeId) tidak punya credential type \($entry.credentialType). Silakan hubungi tim DevOps.")
-        else
-          .
-        end
-      )
-    end
+    reduce entries[] as $entry (true;
+      if (node_exists($entry.nodeId) | not) then
+        error("Node \($entry.nodeName) dengan id \($entry.nodeId) gaada. Silakan hubungi tim DevOps.")
+      elif (cred_exists($entry.nodeId; $entry.credentialType) | not) then
+        error("Node \($entry.nodeName) dengan id \($entry.nodeId) tidak punya credential type \($entry.credentialType). Silakan hubungi tim DevOps.")
+      else
+        .
+      end
+    )
   ' "$workflow_file" >/dev/null; then
     echo "[ERR] Workflow and map validation failed for: $workflow_file"
     exit 1
