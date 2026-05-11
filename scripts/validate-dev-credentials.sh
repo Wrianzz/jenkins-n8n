@@ -37,8 +37,8 @@ validate_workflow_nodes_against_map() {
   local workflow_file="$1"
   local map_file="$2"
 
-  if ! jq -e --argfile mapping "$map_file" '
-    def entries: ($mapping.entries // []);
+  if ! jq -e --slurpfile mapping "$map_file" '
+    def entries: (($mapping[0] // {}) | .entries // []);
 
     def node_exists($node_id):
       ((.nodes // []) | any(.id == $node_id));

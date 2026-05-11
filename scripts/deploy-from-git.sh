@@ -62,8 +62,8 @@ apply_production_credential_map() {
   local tmp_file
   tmp_file="$(mktemp)"
 
-  if ! jq --argfile mapping "$map_path" '
-    def entries: ($mapping.entries // []);
+  if ! jq --slurpfile mapping "$map_path" '
+    def entries: (($mapping[0] // {}) | .entries // []);
 
     def replace_node_credential($node; $entry):
       if ($node.id == $entry.nodeId)
