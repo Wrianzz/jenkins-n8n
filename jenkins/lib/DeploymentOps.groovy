@@ -133,6 +133,9 @@ def validateWorkflowCredentialsOnly(String gitCredId, String workflowId, String 
           if git ls-remote --exit-code --heads origin "workflow/\${_sid_trim}" >/dev/null 2>&1; then
             git fetch origin "workflow/\${_sid_trim}"
             git checkout "origin/workflow/\${_sid_trim}" -- "workflows/\${_sid_trim}.json"
+            if git cat-file -e "origin/workflow/\${_sid_trim}:workflows/credential-maps/\${_sid_trim}.credentials.json" 2>/dev/null; then
+              git checkout "origin/workflow/\${_sid_trim}" -- "workflows/credential-maps/\${_sid_trim}.credentials.json"
+            fi
             echo "[INFO] Loaded sub-workflow file from branch workflow/\${_sid_trim}"
           else
             echo "[WARN] Branch workflow/\${_sid_trim} not found; validating using checked-out files only"
