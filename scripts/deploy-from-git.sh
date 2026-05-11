@@ -66,7 +66,7 @@ apply_production_credential_map() {
     def entries: (($mapping[0] // {}) | .entries // []);
 
     def replace_node_credential($node; $entry):
-      if ($node.id == $entry.nodeId)
+      if ((($node.id // "") | tostring | gsub("^\\s+|\\s+$"; "")) == (($entry.nodeId // "") | tostring | gsub("^\\s+|\\s+$"; ""))
       then
         if (($node.credentials? | type) != "object") then
           error("Node \($entry.nodeName) with id \($entry.nodeId) has no credentials object. Silakan hubungi tim DevOps.")
@@ -86,7 +86,7 @@ apply_production_credential_map() {
 
     def validate_presence($wf):
       reduce entries[] as $entry ([];
-        . + (if (($wf.nodes // []) | any(.id == $entry.nodeId)) then [] else [$entry] end)
+        . + (if (($wf.nodes // []) | any((((.id // "") | tostring | gsub("^\\s+|\\s+$"; "")) == (($entry.nodeId // "") | tostring | gsub("^\\s+|\\s+$"; "")))) then [] else [$entry] end)
       );
 
     if (type == "array") then

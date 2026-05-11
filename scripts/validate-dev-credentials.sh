@@ -48,11 +48,13 @@ validate_workflow_nodes_against_map() {
       end;
 
     def node_exists($node_id):
-      (wf_nodes | any(.id == $node_id));
+      (($node_id | tostring | gsub("^\\s+|\\s+$"; "")) as $wanted
+      | wf_nodes | any(((.id // "") | tostring | gsub("^\\s+|\\s+$"; "")) == $wanted));
 
     def cred_exists($node_id; $cred_type):
-      (wf_nodes
-       | map(select(.id == $node_id))[0]
+      (($node_id | tostring | gsub("^\\s+|\\s+$"; "")) as $wanted
+      | wf_nodes
+       | map(select((((.id // "") | tostring | gsub("^\\s+|\\s+$"; "")) == $wanted)))[0]
        | (.credentials? | type) == "object" and ((.credentials[$cred_type]? | type) == "object"));
 
     reduce entries[] as $entry (true;
