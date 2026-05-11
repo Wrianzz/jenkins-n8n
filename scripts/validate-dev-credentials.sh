@@ -18,7 +18,6 @@ validate_credential_map_schema() {
     (.entries | type) == "array" and
     (.entries | length) > 0 and
     (all(.entries[];
-      (.nodeId | type) == "string" and (.nodeId | length) > 0 and
       (.nodeName | type) == "string" and (.nodeName | length) > 0 and
       (.credentialType | type) == "string" and (.credentialType | length) > 0 and
       (.credentialName | type) == "string" and (.credentialName | length) > 0 and
@@ -26,7 +25,7 @@ validate_credential_map_schema() {
     ))
   ' "$map_path" >/dev/null; then
     echo "[ERR] Invalid credential map schema: $map_path"
-    echo "[ERR] Expected format: {\"entries\":[{\"nodeId\":\"...\",\"nodeName\":\"...\",\"credentialType\":\"...\",\"credentialName\":\"...\",\"credentialId\":\"...\"}]}"
+    echo "[ERR] Expected format: {\"entries\":[{\"nodeName\":\"...\",\"credentialType\":\"...\",\"credentialName\":\"...\",\"credentialId\":\"...\"}]}"
     exit 1
   fi
 
@@ -47,21 +46,25 @@ validate_workflow_nodes_against_map() {
         [ if type == "object" then .nodes[]? else empty end ]
       end;
 
-    def node_exists($node_id):
-      (($node_id | tostring | gsub("^\\s+|\\s+$"; "")) as $wanted
-      | wf_nodes | any(((.id // "") | tostring | gsub("^\\s+|\\s+$"; "")) == $wanted));
+    def norm: tostring | gsub("^\\s+|\\s+$"; "");
 
-    def cred_exists($node_id; $cred_type):
-      (($node_id | tostring | gsub("^\\s+|\\s+$"; "")) as $wanted
+    def node_for_entry($node_name):
+      ($node_name | norm) as $wanted_name
       | wf_nodes
-       | map(select((((.id // "") | tostring | gsub("^\\s+|\\s+$"; "")) == $wanted)))[0]
-       | (.credentials? | type) == "object" and ((.credentials[$cred_type]? | type) == "object"));
+      | map(select((.name // "") | norm == $wanted_name))[0];
+
+    def node_exists($node_name):
+      (node_for_entry($node_name) | type) == "object";
+
+    def cred_exists($node_name; $cred_type):
+      node_for_entry($node_name)
+      | (.credentials? | type) == "object" and ((.credentials[$cred_type]? | type) == "object");
 
     reduce entries[] as $entry (true;
-      if (node_exists($entry.nodeId) | not) then
-        error("Node \($entry.nodeName) dengan id \($entry.nodeId) gaada. Silakan hubungi tim DevOps.")
-      elif (cred_exists($entry.nodeId; $entry.credentialType) | not) then
-        error("Node \($entry.nodeName) dengan id \($entry.nodeId) tidak punya credential type \($entry.credentialType). Silakan hubungi tim DevOps.")
+      if (node_exists($entry.nodeName) | not) then
+        error("Node \($entry.nodeName) gaada. Silakan hubungi tim DevOps.")
+      elif (cred_exists($entry.nodeName; $entry.credentialType) | not) then
+        error("Node \($entry.nodeName) tidak punya credential type \($entry.credentialType). Silakan hubungi tim DevOps.")
       else
         .
       end
