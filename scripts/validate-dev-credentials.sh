@@ -42,9 +42,9 @@ validate_workflow_nodes_against_map() {
 
     def wf_nodes:
       if type == "array" then
-        [ .[] | .nodes[]? ]
+        [ .[] | select(type == "object") | .nodes[]? ]
       else
-        [ .nodes[]? ]
+        [ if type == "object" then .nodes[]? else empty end ]
       end;
 
     def node_exists($node_id):
