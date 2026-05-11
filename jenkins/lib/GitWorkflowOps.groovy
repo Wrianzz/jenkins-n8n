@@ -69,10 +69,12 @@ def commitAndPushWorkflowOnly(String gitCredId, String workflowId, String select
       git fetch origin master
 
       git checkout -B "workflow/${workflowId}" origin/master
+      find workflows -maxdepth 1 -type f -name '*.json' ! -name '${workflowId}.json' -delete
+      mkdir -p workflows/credential-maps
+      find workflows/credential-maps -maxdepth 1 -type f -name '*.credentials.json' ! -name '${workflowId}.credentials.json' -delete
       cp "\$EXPORT_TMP_DIR/${workflowId}.json" "workflows/${workflowId}.json"
       [ -f "\$EXPORT_TMP_DIR/${workflowId}.credentials.json" ] && cp "\$EXPORT_TMP_DIR/${workflowId}.credentials.json" "workflows/credential-maps/${workflowId}.credentials.json" || true
-      git add "workflows/${workflowId}.json"
-      [ -f "workflows/credential-maps/${workflowId}.credentials.json" ] && git add "workflows/credential-maps/${workflowId}.credentials.json" || true
+      git add -A workflows
       if git diff --cached --quiet; then
         echo "[INFO] No changes to commit for workflows/${workflowId}.json"
       else
@@ -92,10 +94,12 @@ def commitAndPushWorkflowOnly(String gitCredId, String workflowId, String select
           [ -f "\$EXPORT_TMP_DIR/\${_sid_trim}.json" ] || continue
 
           git checkout -B "workflow/\${_sid_trim}" origin/master
+          find workflows -maxdepth 1 -type f -name '*.json' ! -name "\${_sid_trim}.json" -delete
+          mkdir -p workflows/credential-maps
+          find workflows/credential-maps -maxdepth 1 -type f -name '*.credentials.json' ! -name "\${_sid_trim}.credentials.json" -delete
           cp "\$EXPORT_TMP_DIR/\${_sid_trim}.json" "workflows/\${_sid_trim}.json"
           [ -f "\$EXPORT_TMP_DIR/\${_sid_trim}.credentials.json" ] && cp "\$EXPORT_TMP_DIR/\${_sid_trim}.credentials.json" "workflows/credential-maps/\${_sid_trim}.credentials.json" || true
-          git add "workflows/\${_sid_trim}.json"
-          [ -f "workflows/credential-maps/\${_sid_trim}.credentials.json" ] && git add "workflows/credential-maps/\${_sid_trim}.credentials.json" || true
+          git add -A workflows
           if git diff --cached --quiet; then
             echo "[INFO] No changes to commit for workflows/\${_sid_trim}.json"
           else
