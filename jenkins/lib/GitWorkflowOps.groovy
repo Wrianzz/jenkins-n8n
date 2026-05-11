@@ -69,6 +69,12 @@ def commitAndPushWorkflowOnly(String gitCredId, String workflowId, String select
       git fetch origin master
 
       git checkout -B "workflow/${workflowId}" origin/master
+      if git ls-remote --exit-code --heads origin "workflow/${workflowId}" >/dev/null 2>&1; then
+        git fetch origin "workflow/${workflowId}"
+        if git cat-file -e "origin/workflow/${workflowId}:workflows/credential-maps/${workflowId}.credentials.json" 2>/dev/null; then
+          git checkout "origin/workflow/${workflowId}" -- "workflows/credential-maps/${workflowId}.credentials.json"
+        fi
+      fi
       find workflows -maxdepth 1 -type f -name '*.json' ! -name '${workflowId}.json' -delete
       mkdir -p workflows/credential-maps
       cp "\$EXPORT_TMP_DIR/${workflowId}.json" "workflows/${workflowId}.json"
@@ -93,6 +99,12 @@ def commitAndPushWorkflowOnly(String gitCredId, String workflowId, String select
           [ -f "\$EXPORT_TMP_DIR/\${_sid_trim}.json" ] || continue
 
           git checkout -B "workflow/\${_sid_trim}" origin/master
+          if git ls-remote --exit-code --heads origin "workflow/\${_sid_trim}" >/dev/null 2>&1; then
+            git fetch origin "workflow/\${_sid_trim}"
+            if git cat-file -e "origin/workflow/\${_sid_trim}:workflows/credential-maps/\${_sid_trim}.credentials.json" 2>/dev/null; then
+              git checkout "origin/workflow/\${_sid_trim}" -- "workflows/credential-maps/\${_sid_trim}.credentials.json"
+            fi
+          fi
           find workflows -maxdepth 1 -type f -name '*.json' ! -name "\${_sid_trim}.json" -delete
           mkdir -p workflows/credential-maps
           cp "\$EXPORT_TMP_DIR/\${_sid_trim}.json" "workflows/\${_sid_trim}.json"
