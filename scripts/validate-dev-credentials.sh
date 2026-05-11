@@ -46,24 +46,33 @@ validate_workflow_nodes_against_map() {
         [ if type == "object" then .nodes[]? else empty end ]
       end;
 
-    def norm: tostring | gsub("^\\s+|\\s+$"; "");
+    def trim: tostring | gsub("^[[:space:]]+|[[:space:]]+$"; "");
+    def norm_name: trim | ascii_downcase | gsub("[[:space:]]+"; " ");
 
-    def node_for_entry($node_name):
-      ($node_name | norm) as $wanted_name
-      | wf_nodes
-      | map(select((.name // "") | norm == $wanted_name))[0];
+    def node_for_entry($entry):
+      ($entry.nodeName // "" | norm_name) as $wanted_name
+      | ($entry.nodeId? // "" | trim) as $wanted_id
+      | wf_nodes as $all
+      | ($all | map(select((.name // "" | norm_name) == $wanted_name))) as $by_name
+      | if ($by_name | length) > 0 then
+          $by_name[0]
+        elif ($wanted_id | length) > 0 then
+          ($all | map(select((.id // "" | trim) == $wanted_id)))[0]
+        else
+          empty
+        end;
 
-    def node_exists($node_name):
-      (node_for_entry($node_name) | type) == "object";
+    def node_exists($entry):
+      (node_for_entry($entry) | type) == "object";
 
-    def cred_exists($node_name; $cred_type):
-      node_for_entry($node_name)
+    def cred_exists($entry; $cred_type):
+      node_for_entry($entry)
       | (.credentials? | type) == "object" and ((.credentials[$cred_type]? | type) == "object");
 
     reduce entries[] as $entry (true;
-      if (node_exists($entry.nodeName) | not) then
-        error("Node \($entry.nodeName) gaada. Silakan hubungi tim DevOps.")
-      elif (cred_exists($entry.nodeName; $entry.credentialType) | not) then
+      if (node_exists($entry) | not) then
+        error("Node \($entry.nodeName) gaada. Pastikan nodeName di credential map sama persis (abaikan kapital/spasi).")
+      elif (cred_exists($entry; $entry.credentialType) | not) then
         error("Node \($entry.nodeName) tidak punya credential type \($entry.credentialType). Silakan hubungi tim DevOps.")
       else
         .
