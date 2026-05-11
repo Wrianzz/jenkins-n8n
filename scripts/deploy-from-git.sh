@@ -57,55 +57,144 @@ apply_production_credential_map() {
   local file_path="$1"
   local map_path="$2"
 
-  [[ -f "$map_path" ]] || { echo "[ERR] Credential map file not found: $map_path"; exit 1; }
+  [[ -f "$map_path" ]] || {
+    echo "[ERR] Credential map file not found: $map_path"
+    exit 1
+  }
 
   local tmp_file
   tmp_file="$(mktemp)"
 
   if ! jq --slurpfile mapping "$map_path" '
-    def entries: (($mapping[0] // {}) | .entries // []);
+    def entries:
+      (($mapping[0] // {}) | .entries // []);
 
-    def replace_node_credential($node; $entry):
-      if ((($node.id // "") | tostring | gsub("^\\s+|\\s+$"; "")) == (($entry.nodeId // "") | tostring | gsub("^\\s+|\\s+$"; ""))
-      then
+    def trim:
+      tostring | gsub("^[[:space:]]+|[[:space:]]+$"; "");
+
+    def norm_name:
+      trim | ascii_downcase | gsub("[[:space:]]+"; " ");
+
+    def all_nodes($root):
+      if ($root | type) == "array" then
+        [ $root[]? | select(type == "object") | .nodes[]? ]
+      elif ($root | type) == "object" then
+        [ $root.nodes[]? ]
+      else
+        []
+      end;
+
+    def credential_keys($node):
+      (($node.credentials // {}) | keys);
+
+    def node_matches_entry($node; $entry):
+      ($entry.nodeId? // "" | trim) as $wanted_id
+      | ($entry.nodeName // "" | norm_name) as $wanted_name
+      | if ($wanted_id | length) > 0 then
+          (($node.id // "" | trim) == $wanted_id)
+        else
+          (($node.name // "" | norm_name) == $wanted_name)
+        end;
+
+    def candidate_nodes($root; $entry):
+      ($entry.nodeName // "" | norm_name) as $wanted
+      | all_nodes($root)
+      | map(.name // "")
+      | map(select(
+          (. | norm_name) as $n
+          | ($wanted | length) > 0
+          and ($n | length) > 0
+          and (
+            ($n | contains($wanted))
+            or
+            ($wanted | contains($n))
+          )
+        ))
+      | .[0:10];
+
+    def credential_key_for_entry($root; $entry):
+      (all_nodes($root) | map(select(node_matches_entry(.; $entry)))) as $matches
+      | if ($matches | length) == 0 then
+          error(
+            "Node \($entry.nodeName) gaada di workflow. " +
+            "Candidate similar nodes: " +
+            (
+              candidate_nodes($root; $entry)
+              | if length > 0 then join(" | ") else "(tidak ada kandidat mirip)" end
+            )
+          )
+        elif ($matches | length) > 1 then
+          error(
+            "Node \($entry.nodeName) match lebih dari satu node. " +
+            "Tambahkan nodeId di credential map supaya tidak ambigu."
+          )
+        else
+          $matches[0] as $node
+          | credential_keys($node) as $keys
+          | ($entry.credentialType? // "" | trim) as $wanted_type
+
+          | if ($keys | length) == 0 then
+              error(
+                "Node \($entry.nodeName) tidak punya credentials object. " +
+                "Node type: \($node.type // "-")"
+              )
+
+            elif ($keys | length) == 1 then
+              $keys[0]
+
+            elif (($wanted_type | length) > 0) and (($node.credentials[$wanted_type]? | type) == "object") then
+              $wanted_type
+
+            elif ($wanted_type | length) > 0 then
+              error(
+                "credentialType di map tidak cocok untuk node \($entry.nodeName). " +
+                "credentialType map: \($wanted_type). " +
+                "Available credentialTypes: [\($keys | join(", "))]"
+              )
+
+            else
+              error(
+                "Node \($entry.nodeName) punya lebih dari 1 credential key: [\($keys | join(", "))]. " +
+                "Tambahkan credentialType khusus untuk entry ini."
+              )
+            end
+        end;
+
+    def replace_node_credential($node; $entry; $cred_key):
+      if node_matches_entry($node; $entry) then
         if (($node.credentials? | type) != "object") then
-          error("Node \($entry.nodeName) with id \($entry.nodeId) has no credentials object. Silakan hubungi tim DevOps.")
-        elif ($node.credentials[$entry.credentialType]? | type) != "object" then
-          error("Node \($entry.nodeName) with id \($entry.nodeId) missing credential type \($entry.credentialType). Silakan hubungi tim DevOps.")
+          error("Node \($entry.nodeName) has no credentials object.")
+        elif (($node.credentials[$cred_key]? | type) != "object") then
+          error("Node \($entry.nodeName) missing credential key \($cred_key).")
         else
           $node
-          | .credentials[$entry.credentialType].id = $entry.credentialId
-          | .credentials[$entry.credentialType].name = $entry.credentialName
+          | .credentials[$cred_key].id = $entry.credentialId
+          | .credentials[$cred_key].name = $entry.credentialName
         end
-      else $node end;
+      else
+        $node
+      end;
 
-    def replace_all($wf):
-      reduce entries[] as $entry ($wf;
-        .nodes = ((.nodes // []) | map(replace_node_credential(.; $entry)))
-      );
-
-    def validate_presence($wf):
-      reduce entries[] as $entry ([];
-        . + (if (($wf.nodes // []) | any((((.id // "") | tostring | gsub("^\\s+|\\s+$"; "")) == (($entry.nodeId // "") | tostring | gsub("^\\s+|\\s+$"; "")))) then [] else [$entry] end)
-      );
-
-    if (type == "array") then
-      (map(replace_all(.))) as $result
-      | (reduce $result[] as $wf ([]; . + validate_presence($wf))) as $missing
-      | if ($missing | length) > 0 then
-          error("Node \($missing[0].nodeName) dengan id \($missing[0].nodeId) gaada. Silakan hubungi tim DevOps.")
+    def apply_entry($entry):
+      . as $root
+      | credential_key_for_entry($root; $entry) as $cred_key
+      | if ($root | type) == "array" then
+          map(
+            if type == "object" then
+              .nodes = ((.nodes // []) | map(replace_node_credential(.; $entry; $cred_key)))
+            else
+              .
+            end
+          )
+        elif ($root | type) == "object" then
+          .nodes = ((.nodes // []) | map(replace_node_credential(.; $entry; $cred_key)))
         else
-          $result
-        end
-    else
-      (replace_all(.)) as $result
-      | (validate_presence($result)) as $missing
-      | if ($missing | length) > 0 then
-          error("Node \($missing[0].nodeName) dengan id \($missing[0].nodeId) gaada. Silakan hubungi tim DevOps.")
-        else
-          $result
-        end
-    end
+          error("Workflow JSON root harus object atau array.")
+        end;
+
+    reduce entries[] as $entry (.;
+      apply_entry($entry)
+    )
   ' "$file_path" > "$tmp_file"; then
     rm -f "$tmp_file"
     echo "[ERR] Failed to apply credential map from $map_path to $file_path"
@@ -113,27 +202,57 @@ apply_production_credential_map() {
   fi
 
   mv "$tmp_file" "$file_path"
+
   echo "    OK: applied production credential map from $(basename "$map_path")"
+
+  echo "    Applied credential entries:"
+  jq -r --slurpfile mapping "$map_path" '
+    def entries:
+      (($mapping[0] // {}) | .entries // []);
+
+    entries[]
+    | "      - nodeName=\"\(.nodeName)\" -> credentialName=\"\(.credentialName)\" credentialId=\"\(.credentialId)\""
+  ' "$file_path" || true
 }
 
 validate_credential_map_schema() {
   local map_path="$1"
 
+  [[ -f "$map_path" ]] || {
+    echo "[ERR] Credential map file not found: $map_path"
+    exit 1
+  }
+
   if ! jq -e '
     (.entries | type) == "array" and
     (.entries | length) > 0 and
     (all(.entries[];
-      (.nodeId | type) == "string" and (.nodeId | length) > 0 and
       (.nodeName | type) == "string" and (.nodeName | length) > 0 and
-      (.credentialType | type) == "string" and (.credentialType | length) > 0 and
       (.credentialName | type) == "string" and (.credentialName | length) > 0 and
-      (.credentialId | type) == "string" and (.credentialId | length) > 0
+      (.credentialId | type) == "string" and (.credentialId | length) > 0 and
+
+      (
+        (has("nodeId") | not)
+        or
+        (.nodeId | type) == "string" and (.nodeId | length) > 0
+      ) and
+
+      (
+        (has("credentialType") | not)
+        or
+        (.credentialType | type) == "string" and (.credentialType | length) > 0
+      )
     ))
   ' "$map_path" >/dev/null; then
     echo "[ERR] Invalid credential map schema: $map_path"
-    echo "[ERR] Expected format: {\"entries\":[{\"nodeId\":\"...\",\"nodeName\":\"...\",\"credentialType\":\"...\",\"credentialName\":\"...\",\"credentialId\":\"...\"}]}"
+    echo "[ERR] Expected format:"
+    echo '{"entries":[{"nodeName":"...","credentialName":"...","credentialId":"..."}]}'
+    echo ""
+    echo "[NOTE] nodeId optional."
+    echo "[NOTE] credentialType optional. Kalau tidak ada, akan otomatis diambil dari workflow JSON."
     exit 1
   fi
+
   echo "    OK: credential map schema valid in $(basename "$map_path")"
 }
 
