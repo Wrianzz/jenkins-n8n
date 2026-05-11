@@ -59,15 +59,19 @@ validate_workflow_nodes_against_map() {
         elif ($wanted_id | length) > 0 then
           ($all | map(select((.id // "" | trim) == $wanted_id)))[0]
         else
-          empty
+          null
         end;
 
     def node_exists($entry):
       (node_for_entry($entry) | type) == "object";
 
     def cred_exists($entry; $cred_type):
-      node_for_entry($entry)
-      | (.credentials? | type) == "object" and ((.credentials[$cred_type]? | type) == "object");
+      (node_for_entry($entry) as $node
+      | if ($node | type) == "object" then
+          (($node.credentials? | type) == "object") and (($node.credentials[$cred_type]? | type) == "object")
+        else
+          false
+        end);
 
     reduce entries[] as $entry (true;
       if (node_exists($entry) | not) then
