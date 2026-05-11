@@ -353,7 +353,7 @@ if [[ -n "${SUB_WORKFLOW_IDS_CSV:-}" ]]; then
     echo "    Push selected sub-workflow: $sub_id"
     scp "${PROD_SCP_OPTS[@]}" "$sub_file" "$PROD_REMOTE:$sub_host_file"
     ssh "${PROD_SSH_OPTS[@]}" "$PROD_REMOTE" \
-      "docker cp '$sub_host_file' '$PROD_CONTAINER:$sub_container_file' && docker exec '$PROD_CONTAINER' n8n import:workflow --input '$sub_container_file' --projectId '$PROD_PROJECT_ID'"
+      "docker cp '$sub_host_file' '$PROD_CONTAINER:$sub_container_file' && docker exec -u 0 '$PROD_CONTAINER' n8n import:workflow --input '$sub_container_file' --projectId '$PROD_PROJECT_ID'"
     ssh "${PROD_SSH_OPTS[@]}" "$PROD_REMOTE" \
       "docker exec '$PROD_CONTAINER' n8n publish:workflow --id='$sub_id'"
     ssh "${PROD_SSH_OPTS[@]}" "$PROD_REMOTE" \
@@ -363,7 +363,7 @@ fi
 
 scp "${PROD_SCP_OPTS[@]}" "$WF_FILE" "$PROD_REMOTE:$remote_host_file"
 ssh "${PROD_SSH_OPTS[@]}" "$PROD_REMOTE" \
-  "docker cp '$remote_host_file' '$PROD_CONTAINER:$remote_container_file' && docker exec '$PROD_CONTAINER' n8n import:workflow --input '$remote_container_file' --projectId '$PROD_PROJECT_ID'"
+  "docker cp '$remote_host_file' '$PROD_CONTAINER:$remote_container_file' && docker exec -u 0 '$PROD_CONTAINER' n8n import:workflow --input '$remote_container_file' --projectId '$PROD_PROJECT_ID'"
 ssh "${PROD_SSH_OPTS[@]}" "$PROD_REMOTE" \
   "docker exec '$PROD_CONTAINER' n8n publish:workflow --id='$WORKFLOW_ID'"
 ssh "${PROD_SSH_OPTS[@]}" "$PROD_REMOTE" \
