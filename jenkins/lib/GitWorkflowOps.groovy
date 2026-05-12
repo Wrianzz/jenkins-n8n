@@ -77,6 +77,7 @@ def commitAndPushWorkflowOnly(String gitCredId, String workflowId, String select
       fi
       find workflows -maxdepth 1 -type f -name '*.json' ! -name '${workflowId}.json' -delete
       mkdir -p workflows/credential-maps
+      find workflows/credential-maps -maxdepth 1 -type f -name '*.credentials.json' ! -name '${workflowId}.credentials.json' -delete
       cp "\$EXPORT_TMP_DIR/${workflowId}.json" "workflows/${workflowId}.json"
       find workflows/credential-maps -maxdepth 1 -type f -name '*.credentials.json' ! -name '${workflowId}.credentials.json' -delete
       [ -f "\$EXPORT_TMP_DIR/${workflowId}.credentials.json" ] && cp "\$EXPORT_TMP_DIR/${workflowId}.credentials.json" "workflows/credential-maps/${workflowId}.credentials.json" || true
