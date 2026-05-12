@@ -82,7 +82,7 @@ def deployFromRepoToProd(String sshCredId, String workflowId, String selectedSub
   )]) {
     sh """
       set -e
-      chmod +x scripts/deploy-from-git.sh scripts/promote-creds.sh
+      chmod +x scripts/deploy-from-git.sh
       export SSH_KEY_FILE
       scripts/deploy-from-git.sh "${workflowId}" "${selectedSubWorkflowIdsArg}"
     """
