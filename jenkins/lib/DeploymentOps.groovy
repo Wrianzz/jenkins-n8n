@@ -114,13 +114,13 @@ def validateWorkflowCredentialsOnly(String gitCredId, String workflowId, String 
       chmod +x "\$VALIDATION_TMP_DIR/validate-dev-credentials.sh"
 
       git remote set-url origin "http://\$GH_USER:\$GH_PASS@atlassian.satnusa.com:7990/scm/dvo/n8n-cicd-workflows.git"
-      git fetch origin "+refs/heads/workflow/${workflowId}:refs/remotes/origin/workflow/${workflowId}"
-      if git show-ref --verify --quiet "refs/remotes/origin/workflow/${workflowId}"; then
+      git fetch origin master
+      
+      if git ls-remote --exit-code --heads origin "workflow/${workflowId}" >/dev/null 2>&1; then
+        git fetch origin "workflow/${workflowId}"
         git checkout -B "workflow/${workflowId}" "origin/workflow/${workflowId}"
-        echo "[INFO] Using workflow branch workflow/${workflowId} for validation"
       else
-        echo "[ERR] Branch workflow/${workflowId} not found on remote after explicit fetch."
-        echo "[ERR] Make sure branch workflow/${workflowId} already exists in remote repository."
+        echo "[ERR] Branch workflow/${workflowId} not found on remote. Are you sure you already push the Workflow?."
         exit 1
       fi
 
