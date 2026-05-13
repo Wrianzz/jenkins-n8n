@@ -16,8 +16,6 @@ SSH_KEY_FILE="${SSH_KEY_FILE:-}"
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 WF_DIR="${REPO_ROOT}/workflows"
-EXTRACT_FILTER="${REPO_ROOT}/scripts/extract-cred-ids.jq"
-PROMOTE_SCRIPT="${REPO_ROOT}/scripts/promote-creds.sh"
 MAP_DIR="${REPO_ROOT}/workflows/credential-maps"
 
 PROD_REMOTE="${PROD_SSH_USER:+${PROD_SSH_USER}@}${PROD_SSH_HOST}"
@@ -45,14 +43,6 @@ else
 fi
 
 [[ -f "$WF_FILE" ]] || { echo "[ERR] Workflow file not found: $WF_FILE"; exit 1; }
-[[ -f "$EXTRACT_FILTER" ]] || { echo "[ERR] jq filter not found: $EXTRACT_FILTER"; exit 1; }
-[[ -x "$PROMOTE_SCRIPT" ]] || { echo "[ERR] promote script not executable: $PROMOTE_SCRIPT"; exit 1; }
-
-collect_cred_ids_from_file() {
-  local file_path="$1"
-  jq -r -f "$EXTRACT_FILTER" "$file_path" 2>/dev/null | awk 'NF' | sort -u
-}
-
 apply_production_credential_map() {
   local file_path="$1"
   local map_path="$2"
@@ -293,48 +283,9 @@ base="$(basename "$WF_FILE")"
 remote_host_file="/tmp/${base}"
 remote_container_file="/tmp/${base}"
 
-echo "[1] Scan credential IDs from workflow(s)"
+echo "[1] Skip credential promotion (mapping-only deployment)"
 
-declare -a CRED_IDS=()
-
-mapfile -t MAIN_CRED_IDS < <(collect_cred_ids_from_file "$WF_FILE")
-if [[ "${#MAIN_CRED_IDS[@]}" -gt 0 ]]; then
-  CRED_IDS+=("${MAIN_CRED_IDS[@]}")
-fi
-
-if [[ -n "${SUB_WORKFLOW_IDS_CSV:-}" ]]; then
-  IFS=',' read -r -a SUB_WORKFLOW_IDS <<< "$SUB_WORKFLOW_IDS_CSV"
-  for sub_id_raw in "${SUB_WORKFLOW_IDS[@]}"; do
-    sub_id="$(echo "$sub_id_raw" | xargs)"
-    [[ -n "$sub_id" ]] || continue
-
-    sub_file="${WF_DIR}/${sub_id}.json"
-    if [[ ! -f "$sub_file" ]]; then
-      echo "[WARN] Selected sub-workflow file not found in repo while scanning credentials: $sub_file"
-      continue
-    fi
-
-    mapfile -t SUB_CRED_IDS < <(collect_cred_ids_from_file "$sub_file")
-    if [[ "${#SUB_CRED_IDS[@]}" -gt 0 ]]; then
-      CRED_IDS+=("${SUB_CRED_IDS[@]}")
-    fi
-  done
-fi
-
-if [[ "${#CRED_IDS[@]}" -gt 0 ]]; then
-  mapfile -t CRED_IDS < <(printf "%s\n" "${CRED_IDS[@]}" | awk 'NF' | sort -u)
-fi
-
-if [[ "${#CRED_IDS[@]}" -gt 0 ]]; then
-  CRED_IDS_RAW="${CRED_IDS[*]}"
-  echo "    Found ${#CRED_IDS[@]} credential ID(s) from main + selected sub-workflow(s): ${CRED_IDS_RAW}"
-  echo "[2] Promote credentials to PROD"
-  "$PROMOTE_SCRIPT" "$CRED_IDS_RAW"
-else
-  echo "    No credential IDs found in main/sub-workflow files; skip promote creds"
-fi
-
-echo "[3] Transfer and import workflow to PROD"
+echo "[2] Transfer and import workflow to PROD"
 
 if [[ -n "${SUB_WORKFLOW_IDS_CSV:-}" ]]; then
   IFS=',' read -r -a SUB_WORKFLOW_IDS <<< "$SUB_WORKFLOW_IDS_CSV"
@@ -369,4 +320,4 @@ ssh "${PROD_SSH_OPTS[@]}" "$PROD_REMOTE" \
 ssh "${PROD_SSH_OPTS[@]}" "$PROD_REMOTE" \
   "rm -f '$remote_host_file'; docker exec '$PROD_CONTAINER' sh -lc 'rm -f \"$remote_container_file\" || true'"
 
-echo "[4] Done"
+echo "[3] Done"

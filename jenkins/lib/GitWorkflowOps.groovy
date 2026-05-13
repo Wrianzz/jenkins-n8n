@@ -77,6 +77,7 @@ def commitAndPushWorkflowOnly(String gitCredId, String workflowId, String select
       fi
       find workflows -maxdepth 1 -type f -name '*.json' ! -name '${workflowId}.json' -delete
       mkdir -p workflows/credential-maps
+      find workflows/credential-maps -maxdepth 1 -type f -name '*.credentials.json' ! -name '${workflowId}.credentials.json' -delete
       cp "\$EXPORT_TMP_DIR/${workflowId}.json" "workflows/${workflowId}.json"
       [ -f "\$EXPORT_TMP_DIR/${workflowId}.credentials.json" ] && cp "\$EXPORT_TMP_DIR/${workflowId}.credentials.json" "workflows/credential-maps/${workflowId}.credentials.json" || true
       git add -A workflows
@@ -107,6 +108,7 @@ def commitAndPushWorkflowOnly(String gitCredId, String workflowId, String select
           fi
           find workflows -maxdepth 1 -type f -name '*.json' ! -name "\${_sid_trim}.json" -delete
           mkdir -p workflows/credential-maps
+          find workflows/credential-maps -maxdepth 1 -type f -name '*.credentials.json' ! -name "\${_sid_trim}.credentials.json" -delete
           cp "\$EXPORT_TMP_DIR/\${_sid_trim}.json" "workflows/\${_sid_trim}.json"
           [ -f "\$EXPORT_TMP_DIR/\${_sid_trim}.credentials.json" ] && cp "\$EXPORT_TMP_DIR/\${_sid_trim}.credentials.json" "workflows/credential-maps/\${_sid_trim}.credentials.json" || true
           git add -A workflows
