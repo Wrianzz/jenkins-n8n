@@ -124,8 +124,20 @@ def validateWorkflowCredentialsOnly(String gitCredId, String workflowId, String 
         exit 1
       fi
 
-      if [ -n "${selectedSubWorkflowIdsArg}" ]; then
-        SUB_IDS_NORMALIZED="\$(echo "${selectedSubWorkflowIdsArg}" | tr ',\\n\\r\\t' '    ')"
+      if [ -z "${selectedSubWorkflowIdsArg}" ] && [ -f "workflows/${workflowId}.json" ]; then
+        selectedSubWorkflowIdsArg="\$(jq -r '
+          def wf_objs: if type == "array" then .[] else . end;
+          wf_objs
+          | .nodes[]?
+          | select((.type // "") | test("executeWorkflow"; "i"))
+          | (.parameters.workflowId // .parameters.workflow?.id // empty)
+          | if type == "string" then . elif type == "object" then (.value // empty) else empty end
+        ' "workflows/${workflowId}.json" | awk 'NF' | sort -u | paste -sd ',' -)"
+        echo "[INFO] Auto-discovered sub-workflow IDs from workflow branch: \${selectedSubWorkflowIdsArg:-'(none)'}"
+      fi
+
+      if [ -n "\${selectedSubWorkflowIdsArg}" ]; then
+        SUB_IDS_NORMALIZED="\$(echo "\${selectedSubWorkflowIdsArg}" | tr ',\\n\\r\\t' '    ')"
         for _sid in \$SUB_IDS_NORMALIZED; do
           _sid_trim="\$(echo "\$_sid" | xargs)"
           [ -n "\$_sid_trim" ] || continue
@@ -143,7 +155,7 @@ def validateWorkflowCredentialsOnly(String gitCredId, String workflowId, String 
         done
       fi
 
-      "\$VALIDATION_TMP_DIR/validate-dev-credentials.sh" "${workflowId}" "workflows/${workflowId}.json" "${selectedSubWorkflowIdsArg}"
+      "\$VALIDATION_TMP_DIR/validate-dev-credentials.sh" "${workflowId}" "workflows/${workflowId}.json" "\${selectedSubWorkflowIdsArg}"
     """
   }
 }

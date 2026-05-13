@@ -11,6 +11,12 @@ pipeline {
   agent any
 
   parameters {
+    string(
+      name: 'WORKFLOW_ID',
+      defaultValue: '',
+      trim: true,
+      description: 'Workflow ID n8n (contoh: kzSYd3lcXFK9JsCz). Wajib diisi.'
+    )
     choice(
       name: 'PIPELINE_MODE',
       choices: ['DEV_TO_REPO', 'REPO_TO_PROD', 'DEV_TO_PROD'],
@@ -19,7 +25,7 @@ pipeline {
   }
 
   environment {
-    WORKFLOW_ID = 'EmmBXc2Kh7Sb8QfH'
+    WORKFLOW_ID = ''
 
     SSH_CRED_ID  = 'n8n-cross-server-ssh'
     DEV_SSH_HOST = '192.168.88.20'
@@ -48,10 +54,17 @@ pipeline {
     stage('Setup Build User Info') {
       steps {
         script {
+          if (!params.WORKFLOW_ID?.trim()) {
+            error('Parameter WORKFLOW_ID wajib diisi. Contoh: kzSYd3lcXFK9JsCz')
+          }
+          env.WORKFLOW_ID = params.WORKFLOW_ID.trim()
+
           wrap([$class: 'BuildUser']) {
             env.authorName = env.BUILD_USER ?: 'Unknown'
             env.authorEmail = env.BUILD_USER_EMAIL ?: 'no-reply@example.com'
           }
+
+          echo "Resolved WORKFLOW_ID: ${env.WORKFLOW_ID}"
         }
       }
     }
@@ -125,10 +138,6 @@ pipeline {
       }
       steps {
         script {
-          if (!env.SELECTED_SUBWORKFLOW_IDS?.trim()) {
-            env.SELECTED_SUBWORKFLOW_IDS = DeploymentOps.discoverSubWorkflowIdsFromFile(env.WORKFLOW_ID) ?: ''
-            echo "Auto-discovered sub-workflow IDs for validation/deploy: ${env.SELECTED_SUBWORKFLOW_IDS ?: '(none)'}"
-          }
           DeploymentOps.validateWorkflowCredentialsOnly(env.GIT_CRED_ID, env.WORKFLOW_ID, env.SELECTED_SUBWORKFLOW_IDS ?: '')
         }
       }
