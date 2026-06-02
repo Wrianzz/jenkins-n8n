@@ -6,6 +6,31 @@ WORKFLOW_FILE="${2:-workflows/${WORKFLOW_ID}.json}"
 SUB_WORKFLOW_IDS_CSV="${3:-}"
 MAP_DIR="workflows/credential-maps"
 
+workflow_has_credentials() {
+  local workflow_file="$1"
+
+  jq -e '
+    def wf_nodes:
+      if type == "array" then
+        [ .[] | select(type == "object") | .nodes[]? ]
+      elif type == "object" then
+        [ .nodes[]? ]
+      else
+        []
+      end;
+
+    (
+      wf_nodes
+      | map(select(
+          (.credentials? | type) == "object"
+          and
+          ((.credentials // {}) | keys | length) > 0
+        ))
+      | length
+    ) > 0
+  ' "$workflow_file" >/dev/null 2>&1
+}
+
 validate_credential_map_schema() {
   local map_path="$1"
 
@@ -25,14 +50,27 @@ validate_credential_map_schema() {
     (all(.entries[];
       (.nodeName | type) == "string" and (.nodeName | length) > 0 and
       (.credentialName | type) == "string" and (.credentialName | length) > 0 and
-      (.credentialId | type) == "string" and (.credentialId | length) > 0
+      (.credentialId | type) == "string" and (.credentialId | length) > 0 and
+
+      (
+        (has("nodeId") | not)
+        or
+        ((.nodeId | type) == "string" and (.nodeId | length) > 0)
+      ) and
+
+      (
+        (has("credentialType") | not)
+        or
+        ((.credentialType | type) == "string" and (.credentialType | length) > 0)
+      )
     ))
   ' "$map_path" >/dev/null; then
     echo "[ERR] Invalid credential map schema: $map_path"
     echo "[ERR] Expected format:"
     echo '{"entries":[{"nodeName":"...","credentialName":"...","credentialId":"..."}]}'
     echo ""
-    echo "[NOTE] credentialType sudah tidak wajib karena akan otomatis diambil dari workflow JSON."
+    echo "[NOTE] nodeId optional."
+    echo "[NOTE] credentialType optional karena akan otomatis diambil dari workflow JSON kalau hanya ada 1 credential key."
     exit 1
   fi
 
@@ -52,7 +90,8 @@ validate_workflow_nodes_against_map() {
     --arg workflow_file "$workflow_file" \
     --arg map_file "$map_file" \
     --slurpfile mapping "$map_file" '
-    def entries: (($mapping[0] // {}) | .entries // []);
+    def entries:
+      (($mapping[0] // {}) | .entries // []);
 
     def wf_nodes:
       if type == "array" then
@@ -210,8 +249,8 @@ validate_workflow_nodes_against_map() {
             end
         ),
         "",
-        "[HINT] Sekarang credentialType tidak wajib.",
-        "[HINT] Script akan otomatis mengambil credential key dari workflow JSON, misalnya discordBotApi/postgres.",
+        "[HINT] Sekarang credentialType tidak wajib kalau node hanya punya 1 credential key.",
+        "[HINT] Script akan otomatis mengambil credential key dari workflow JSON, misalnya discordBotApi/postgres/httpHeaderAuth.",
         (null | halt_error(1))
       else
         "[DEBUG] Inferred credential mapping:",
@@ -250,7 +289,15 @@ validate_one_workflow() {
 
   local workflow_base
   workflow_base="$(basename "${workflow_file%.json}")"
+
   local map_file="${MAP_DIR}/${workflow_base}.credentials.json"
+
+  echo "[START] Check credential requirement for ${workflow_base}"
+
+  if ! workflow_has_credentials "$workflow_file"; then
+    echo "[SKIP] Workflow has no credentials; credential map not required: ${workflow_base}"
+    return 0
+  fi
 
   echo "[START] Validate credential map for ${workflow_base}"
   validate_credential_map_schema "$map_file"
@@ -261,9 +308,11 @@ validate_one_workflow "$WORKFLOW_FILE"
 
 if [[ -n "$SUB_WORKFLOW_IDS_CSV" ]]; then
   SUB_WORKFLOW_IDS_NORMALIZED="$(echo "$SUB_WORKFLOW_IDS_CSV" | tr ',\n\r\t' '    ')"
+
   for sub_id_raw in $SUB_WORKFLOW_IDS_NORMALIZED; do
     sub_id="$(echo "$sub_id_raw" | xargs)"
     [[ -n "$sub_id" ]] || continue
+
     validate_one_workflow "workflows/${sub_id}.json"
   done
 fi

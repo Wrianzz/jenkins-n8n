@@ -21,28 +21,104 @@ MAP_DIR="${REPO_ROOT}/workflows/credential-maps"
 PROD_REMOTE="${PROD_SSH_USER:+${PROD_SSH_USER}@}${PROD_SSH_HOST}"
 PROD_SSH_OPTS=( -p "$PROD_SSH_PORT" -o BatchMode=yes -o StrictHostKeyChecking=accept-new )
 PROD_SCP_OPTS=( -P "$PROD_SSH_PORT" -o BatchMode=yes -o StrictHostKeyChecking=accept-new )
+
 if [[ -n "$SSH_KEY_FILE" ]]; then
   PROD_SSH_OPTS+=( -i "$SSH_KEY_FILE" )
   PROD_SCP_OPTS+=( -i "$SSH_KEY_FILE" )
 fi
 
 VALIDATE_ONLY=0
+
 if [[ "${1:-}" == "--validate-only" ]]; then
   VALIDATE_ONLY=1
   shift
 fi
 
 WF_FILE=""
+SUB_WORKFLOW_IDS_CSV="${SUB_WORKFLOW_IDS_CSV:-}"
+
 if [[ "${1:-}" == "--file" ]]; then
   WF_FILE="${2:?usage: deploy-from-git.sh --file <path-to-json>}"
   [[ "$WF_FILE" = /* ]] || WF_FILE="${REPO_ROOT}/${WF_FILE}"
+  WORKFLOW_ID="$(basename "${WF_FILE%.json}")"
+  SUB_WORKFLOW_IDS_CSV="${3:-}"
 else
   WORKFLOW_ID="${1:?usage: deploy-from-git.sh <WORKFLOW_ID>}"
   SUB_WORKFLOW_IDS_CSV="${2:-}"
   WF_FILE="${WF_DIR}/${WORKFLOW_ID}.json"
 fi
 
-[[ -f "$WF_FILE" ]] || { echo "[ERR] Workflow file not found: $WF_FILE"; exit 1; }
+[[ -f "$WF_FILE" ]] || {
+  echo "[ERR] Workflow file not found: $WF_FILE"
+  exit 1
+}
+
+workflow_has_credentials() {
+  local workflow_file="$1"
+
+  jq -e '
+    def wf_nodes:
+      if type == "array" then
+        [ .[] | select(type == "object") | .nodes[]? ]
+      elif type == "object" then
+        [ .nodes[]? ]
+      else
+        []
+      end;
+
+    (
+      wf_nodes
+      | map(select(
+          (.credentials? | type) == "object"
+          and
+          ((.credentials // {}) | keys | length) > 0
+        ))
+      | length
+    ) > 0
+  ' "$workflow_file" >/dev/null 2>&1
+}
+
+validate_credential_map_schema() {
+  local map_path="$1"
+
+  [[ -f "$map_path" ]] || {
+    echo "[ERR] Credential map file not found: $map_path"
+    exit 1
+  }
+
+  if ! jq -e '
+    (.entries | type) == "array" and
+    (.entries | length) > 0 and
+    (all(.entries[];
+      (.nodeName | type) == "string" and (.nodeName | length) > 0 and
+      (.credentialName | type) == "string" and (.credentialName | length) > 0 and
+      (.credentialId | type) == "string" and (.credentialId | length) > 0 and
+
+      (
+        (has("nodeId") | not)
+        or
+        ((.nodeId | type) == "string" and (.nodeId | length) > 0)
+      ) and
+
+      (
+        (has("credentialType") | not)
+        or
+        ((.credentialType | type) == "string" and (.credentialType | length) > 0)
+      )
+    ))
+  ' "$map_path" >/dev/null; then
+    echo "[ERR] Invalid credential map schema: $map_path"
+    echo "[ERR] Expected format:"
+    echo '{"entries":[{"nodeName":"...","credentialName":"...","credentialId":"..."}]}'
+    echo ""
+    echo "[NOTE] nodeId optional."
+    echo "[NOTE] credentialType optional. Kalau tidak ada, akan otomatis diambil dari workflow JSON."
+    exit 1
+  fi
+
+  echo "    OK: credential map schema valid in $(basename "$map_path")"
+}
+
 apply_production_credential_map() {
   local file_path="$1"
   local map_path="$2"
@@ -205,68 +281,69 @@ apply_production_credential_map() {
   ' "$file_path" || true
 }
 
-validate_credential_map_schema() {
-  local map_path="$1"
+validate_and_apply_credential_map_if_needed() {
+  local workflow_file="$1"
+  local map_file="$2"
 
-  [[ -f "$map_path" ]] || {
-    echo "[ERR] Credential map file not found: $map_path"
-    exit 1
-  }
+  local workflow_base
+  workflow_base="$(basename "${workflow_file%.json}")"
 
-  if ! jq -e '
-    (.entries | type) == "array" and
-    (.entries | length) > 0 and
-    (all(.entries[];
-      (.nodeName | type) == "string" and (.nodeName | length) > 0 and
-      (.credentialName | type) == "string" and (.credentialName | length) > 0 and
-      (.credentialId | type) == "string" and (.credentialId | length) > 0 and
+  echo "    Check credential requirement for ${workflow_base}"
 
-      (
-        (has("nodeId") | not)
-        or
-        (.nodeId | type) == "string" and (.nodeId | length) > 0
-      ) and
-
-      (
-        (has("credentialType") | not)
-        or
-        (.credentialType | type) == "string" and (.credentialType | length) > 0
-      )
-    ))
-  ' "$map_path" >/dev/null; then
-    echo "[ERR] Invalid credential map schema: $map_path"
-    echo "[ERR] Expected format:"
-    echo '{"entries":[{"nodeName":"...","credentialName":"...","credentialId":"..."}]}'
-    echo ""
-    echo "[NOTE] nodeId optional."
-    echo "[NOTE] credentialType optional. Kalau tidak ada, akan otomatis diambil dari workflow JSON."
-    exit 1
+  if ! workflow_has_credentials "$workflow_file"; then
+    echo "    SKIP: workflow has no credentials; credential map not required for ${workflow_base}"
+    return 0
   fi
 
-  echo "    OK: credential map schema valid in $(basename "$map_path")"
+  validate_credential_map_schema "$map_file"
+  apply_production_credential_map "$workflow_file" "$map_file"
+}
+
+import_workflow_file_to_prod() {
+  local local_file="$1"
+  local workflow_id="$2"
+
+  local host_file="/tmp/${workflow_id}.json"
+  local container_file="/tmp/${workflow_id}.json"
+
+  echo "    Copy workflow file to PROD host: $host_file"
+  scp "${PROD_SCP_OPTS[@]}" "$local_file" "$PROD_REMOTE:$host_file"
+
+  echo "    Import workflow to PROD container: $workflow_id"
+  ssh "${PROD_SSH_OPTS[@]}" "$PROD_REMOTE" \
+    "docker cp '$host_file' '$PROD_CONTAINER:$container_file' && \
+     docker exec -u 0 '$PROD_CONTAINER' n8n import:workflow --input '$container_file' --projectId '$PROD_PROJECT_ID'"
+
+  echo "    Publish workflow: $workflow_id"
+  ssh "${PROD_SSH_OPTS[@]}" "$PROD_REMOTE" \
+    "docker exec '$PROD_CONTAINER' n8n publish:workflow --id='$workflow_id'"
+
+  echo "    Cleanup temp files: $workflow_id"
+  ssh "${PROD_SSH_OPTS[@]}" "$PROD_REMOTE" \
+    "rm -f '$host_file'; docker exec '$PROD_CONTAINER' sh -lc 'rm -f \"$container_file\" || true'"
 }
 
 MAP_FILE="${MAP_DIR}/$(basename "${WF_FILE%.json}").credentials.json"
 
 echo "[0] Validate and apply workflow credential mapping"
-validate_credential_map_schema "$MAP_FILE"
-apply_production_credential_map "$WF_FILE" "$MAP_FILE"
+validate_and_apply_credential_map_if_needed "$WF_FILE" "$MAP_FILE"
 
 if [[ -n "${SUB_WORKFLOW_IDS_CSV:-}" ]]; then
   IFS=',' read -r -a SUB_WORKFLOW_IDS <<< "$SUB_WORKFLOW_IDS_CSV"
+
   for sub_id_raw in "${SUB_WORKFLOW_IDS[@]}"; do
     sub_id="$(echo "$sub_id_raw" | xargs)"
     [[ -n "$sub_id" ]] || continue
 
     sub_file="${WF_DIR}/${sub_id}.json"
+
     if [[ ! -f "$sub_file" ]]; then
-      echo "[WARN] Selected sub-workflow file not found in repo while validating credential naming: $sub_file"
+      echo "[WARN] Selected sub-workflow file not found in repo while validating credential mapping: $sub_file"
       continue
     fi
 
     sub_map_file="${MAP_DIR}/$(basename "${sub_file%.json}").credentials.json"
-    validate_credential_map_schema "$sub_map_file"
-    apply_production_credential_map "$sub_file" "$sub_map_file"
+    validate_and_apply_credential_map_if_needed "$sub_file" "$sub_map_file"
   done
 fi
 
@@ -277,11 +354,11 @@ fi
 
 PROD_PROJECT_ID="$(ssh "${PROD_SSH_OPTS[@]}" "$PROD_REMOTE" \
   "docker exec '$PROD_PG_CONTAINER' psql -U n8n -d n8n -tA -c \"select id from project order by \\\"createdAt\\\" asc limit 1;\"" | tr -d '\r' | xargs)"
-[[ -n "$PROD_PROJECT_ID" ]] || { echo "[ERR] PROD_PROJECT_ID not found"; exit 1; }
 
-base="$(basename "$WF_FILE")"
-remote_host_file="/tmp/${base}"
-remote_container_file="/tmp/${base}"
+[[ -n "$PROD_PROJECT_ID" ]] || {
+  echo "[ERR] PROD_PROJECT_ID not found"
+  exit 1
+}
 
 echo "[1] Skip credential promotion (mapping-only deployment)"
 
@@ -289,35 +366,24 @@ echo "[2] Transfer and import workflow to PROD"
 
 if [[ -n "${SUB_WORKFLOW_IDS_CSV:-}" ]]; then
   IFS=',' read -r -a SUB_WORKFLOW_IDS <<< "$SUB_WORKFLOW_IDS_CSV"
+
   for sub_id_raw in "${SUB_WORKFLOW_IDS[@]}"; do
     sub_id="$(echo "$sub_id_raw" | xargs)"
     [[ -n "$sub_id" ]] || continue
 
     sub_file="${WF_DIR}/${sub_id}.json"
+
     if [[ ! -f "$sub_file" ]]; then
       echo "[WARN] Selected sub-workflow file not found in repo: $sub_file. Skip push for this sub-workflow."
       continue
     fi
 
-    sub_host_file="/tmp/${sub_id}.json"
-    sub_container_file="/tmp/${sub_id}.json"
     echo "    Push selected sub-workflow: $sub_id"
-    scp "${PROD_SCP_OPTS[@]}" "$sub_file" "$PROD_REMOTE:$sub_host_file"
-    ssh "${PROD_SSH_OPTS[@]}" "$PROD_REMOTE" \
-      "docker cp '$sub_host_file' '$PROD_CONTAINER:$sub_container_file' && docker exec -u 0 '$PROD_CONTAINER' n8n import:workflow --input '$sub_container_file' --projectId '$PROD_PROJECT_ID'"
-    ssh "${PROD_SSH_OPTS[@]}" "$PROD_REMOTE" \
-      "docker exec '$PROD_CONTAINER' n8n publish:workflow --id='$sub_id'"
-    ssh "${PROD_SSH_OPTS[@]}" "$PROD_REMOTE" \
-      "rm -f '$sub_host_file'; docker exec '$PROD_CONTAINER' sh -lc 'rm -f \"$sub_container_file\" || true'"
+    import_workflow_file_to_prod "$sub_file" "$sub_id"
   done
 fi
 
-scp "${PROD_SCP_OPTS[@]}" "$WF_FILE" "$PROD_REMOTE:$remote_host_file"
-ssh "${PROD_SSH_OPTS[@]}" "$PROD_REMOTE" \
-  "docker cp '$remote_host_file' '$PROD_CONTAINER:$remote_container_file' && docker exec -u 0 '$PROD_CONTAINER' n8n import:workflow --input '$remote_container_file' --projectId '$PROD_PROJECT_ID'"
-ssh "${PROD_SSH_OPTS[@]}" "$PROD_REMOTE" \
-  "docker exec '$PROD_CONTAINER' n8n publish:workflow --id='$WORKFLOW_ID'"
-ssh "${PROD_SSH_OPTS[@]}" "$PROD_REMOTE" \
-  "rm -f '$remote_host_file'; docker exec '$PROD_CONTAINER' sh -lc 'rm -f \"$remote_container_file\" || true'"
+echo "    Push main workflow: $WORKFLOW_ID"
+import_workflow_file_to_prod "$WF_FILE" "$WORKFLOW_ID"
 
 echo "[3] Done"
