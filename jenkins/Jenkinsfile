@@ -92,7 +92,7 @@ pipeline {
       }
       steps {
         script {
-          env.SELECTED_SUBWORKFLOW_IDS = DeploymentOps.discoverAndSelectSubWorkflows(env.WORKFLOW_ID) ?: ''
+          env.SELECTED_SUBWORKFLOW_IDS = DeploymentOps.discoverAndSelectSubWorkflows(env.SSH_CRED_ID, env.WORKFLOW_ID) ?: ''
           if (env.SELECTED_SUBWORKFLOW_IDS?.trim()) {
             DeploymentOps.exportWorkflowFromDev(env.SSH_CRED_ID, env.WORKFLOW_ID, env.SELECTED_SUBWORKFLOW_IDS)
           }

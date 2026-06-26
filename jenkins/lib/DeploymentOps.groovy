@@ -57,44 +57,45 @@ def subWorkflowDiscoveryJq() {
   '''
 }
 
-def discoverAndSelectSubWorkflows(String workflowId) {
-  String workflowFile = "workflows/${workflowId}.json"
+def discoverAndSelectSubWorkflows(String sshCredId, String workflowId) {
+  List<String> subWorkflowIds = discoverRecursiveSubWorkflowIdsFromFiles(workflowId)
 
-  String rawSubWorkflowIds = sh(
-    script: """
-      set -euo pipefail
+  Set<String> exportedIds = [] as Set
+  while (true) {
+    List<String> missingIds = subWorkflowIds.findAll { subId ->
+      subId && !exportedIds.contains(subId) && !fileExists("workflows/${subId}.json")
+    }
 
-      if [ ! -f '${workflowFile}' ]; then
-        echo "[WARN] Workflow file not found while discovering sub-workflows: ${workflowFile}" >&2
-        exit 0
-      fi
+    if (missingIds.isEmpty()) {
+      break
+    }
 
-      jq -r '${subWorkflowDiscoveryJq()}' '${workflowFile}' | awk 'NF' | sort -u
-    """,
-    returnStdout: true
-  ).trim()
+    missingIds.each { subId ->
+      echo "[DeploymentOps] Export nested sub-workflow candidate from DEV for recursive discovery: ${subId}"
+      exportWorkflowFromDev(sshCredId, subId)
+      exportedIds << subId
+    }
 
-  if (!rawSubWorkflowIds) {
-    echo "[DeploymentOps] No valid sub-workflow ID found in ${workflowFile}"
-    return ''
+    List<String> refreshedIds = discoverRecursiveSubWorkflowIdsFromFiles(workflowId)
+    if (refreshedIds == subWorkflowIds) {
+      break
+    }
+    subWorkflowIds = refreshedIds
   }
-
-  List<String> subWorkflowIds = rawSubWorkflowIds
-    .readLines()
-    .collect { it.trim() }
-    .findAll { it }
-    .unique()
 
   if (subWorkflowIds.isEmpty()) {
+    echo "[DeploymentOps] No valid sub-workflow ID found in workflows/${workflowId}.json or nested sub-workflows"
     return ''
   }
 
-  List selectionParams = subWorkflowIds.collect { subId ->
-    [
+  List selectionParams = []
+  subWorkflowIds.eachWithIndex { subId, index ->
+    String workflowName = workflowDisplayName(subId)
+    selectionParams << [
       $class: 'BooleanParameterDefinition',
-      name: "PUSH_SUBWF_${subId}",
+      name: "PUSH_SUBWF_${index}",
       defaultValue: false,
-      description: "Include sub-workflow ${subId} in repo/prod push"
+      description: "Include sub-workflow ${workflowName} (${subId}) in repo/prod push"
     ]
   }
 
@@ -116,7 +117,13 @@ def discoverAndSelectSubWorkflows(String workflowId) {
   if (inputResult instanceof Map) {
     inputResult.each { key, value ->
       if (key?.toString()?.startsWith('PUSH_SUBWF_') && value?.toString()?.equalsIgnoreCase('true')) {
-        selectedIds << key.toString().replaceFirst('^PUSH_SUBWF_', '').trim()
+        String indexText = key.toString().replaceFirst('^PUSH_SUBWF_', '').trim()
+        if (indexText ==~ /^[0-9]+$/) {
+          Integer selectedIndex = indexText as Integer
+          if (selectedIndex >= 0 && selectedIndex < subWorkflowIds.size()) {
+            selectedIds << subWorkflowIds[selectedIndex]
+          }
+        }
       }
     }
   }
@@ -129,10 +136,11 @@ def discoverAndSelectSubWorkflows(String workflowId) {
   return selectedIds.join(',')
 }
 
-def discoverSubWorkflowIdsFromFile(String workflowId) {
+
+def discoverRecursiveSubWorkflowIdsFromFiles(String workflowId) {
   String workflowFile = "workflows/${workflowId}.json"
 
-  return sh(
+  String rawSubWorkflowIds = sh(
     script: """
       set -euo pipefail
 
@@ -141,10 +149,73 @@ def discoverSubWorkflowIdsFromFile(String workflowId) {
         exit 0
       fi
 
-      jq -r '${subWorkflowDiscoveryJq()}' '${workflowFile}' | awk 'NF' | sort -u | paste -sd ',' -
+      tmp_seen="\$(mktemp)"
+      tmp_queue="\$(mktemp)"
+      tmp_next="\$(mktemp)"
+      trap 'rm -f "\$tmp_seen" "\$tmp_queue" "\$tmp_next"' EXIT
+
+      jq -r '${subWorkflowDiscoveryJq()}' '${workflowFile}' | awk 'NF' | sort -u > "\$tmp_queue"
+
+      while [ -s "\$tmp_queue" ]; do
+        : > "\$tmp_next"
+
+        while IFS= read -r sub_id; do
+          [ -n "\$sub_id" ] || continue
+          if grep -Fxq "\$sub_id" "\$tmp_seen"; then
+            continue
+          fi
+
+          echo "\$sub_id" >> "\$tmp_seen"
+
+          if [ -f "workflows/\${sub_id}.json" ]; then
+            jq -r '${subWorkflowDiscoveryJq()}' "workflows/\${sub_id}.json" | awk 'NF' >> "\$tmp_next"
+          else
+            echo "[INFO] Sub-workflow file not available yet for deeper discovery: workflows/\${sub_id}.json" >&2
+          fi
+        done < "\$tmp_queue"
+
+        if [ -s "\$tmp_next" ]; then
+          sort -u "\$tmp_next" > "\$tmp_queue"
+        else
+          : > "\$tmp_queue"
+        fi
+      done
+
+      sort -u "\$tmp_seen"
     """,
     returnStdout: true
   ).trim()
+
+  if (!rawSubWorkflowIds) {
+    return []
+  }
+
+  return rawSubWorkflowIds
+    .readLines()
+    .collect { it.trim() }
+    .findAll { it && it != workflowId && (it ==~ /^[A-Za-z0-9_-]{10,}$/) }
+    .unique()
+}
+
+def workflowDisplayName(String workflowId) {
+  String workflowFile = "workflows/${workflowId}.json"
+  if (!fileExists(workflowFile)) {
+    return workflowId
+  }
+
+  String displayName = sh(
+    script: """
+      set -euo pipefail
+      jq -r 'if type == "array" then (.[0].name // empty) else (.name // empty) end' '${workflowFile}' | head -n 1
+    """,
+    returnStdout: true
+  ).trim()
+
+  return displayName ?: workflowId
+}
+
+def discoverSubWorkflowIdsFromFile(String workflowId) {
+  return discoverRecursiveSubWorkflowIdsFromFiles(workflowId).join(',')
 }
 
 def discoverSubWorkflowIdsFromRemoteWorkflowBranch(String gitCredId, String workflowId) {
