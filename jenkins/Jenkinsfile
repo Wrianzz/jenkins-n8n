@@ -33,6 +33,7 @@ pipeline {
     PROD_N8N_API_KEY_CRED_ID = 'n8n-production-api-key'
 
     DEV_CONTAINER     = 'n8n'
+    DEV_PG_CONTAINER  = 'n8n-compose-postgres-dev-1'
     PROD_CONTAINER    = 'n8n-compose-n8n-prod-1'
     PROD_PG_CONTAINER = 'n8n-compose-postgres-prod-1'
 
