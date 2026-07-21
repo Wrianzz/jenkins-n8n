@@ -17,6 +17,7 @@ SSH_KEY_FILE="${SSH_KEY_FILE:-}"
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 WF_DIR="${REPO_ROOT}/workflows"
 MAP_DIR="${REPO_ROOT}/workflows/credential-maps"
+FOLDER_MAP_DIR="${REPO_ROOT}/workflows/folder-maps"
 
 PROD_REMOTE="${PROD_SSH_USER:+${PROD_SSH_USER}@}${PROD_SSH_HOST}"
 PROD_SSH_OPTS=( -p "$PROD_SSH_PORT" -o BatchMode=yes -o StrictHostKeyChecking=accept-new )
@@ -323,6 +324,82 @@ import_workflow_file_to_prod() {
     "rm -f '$host_file'; docker exec '$PROD_CONTAINER' sh -lc 'rm -f \"$container_file\" || true'"
 }
 
+apply_workflow_folder_path_to_prod() {
+  local workflow_id="$1"
+  local folder_map_file="${FOLDER_MAP_DIR}/${workflow_id}.folder.json"
+
+  [[ -f "$folder_map_file" ]] || {
+    echo "    SKIP: no folder metadata for workflow ${workflow_id}"
+    return 0
+  }
+
+  local folder_path_json
+  folder_path_json="$(jq -c '.path // []' "$folder_map_file")"
+
+  if [[ "$folder_path_json" == "[]" ]]; then
+    echo "    Folder path empty for workflow ${workflow_id}; keep workflow at project root"
+    return 0
+  fi
+
+  echo "    Ensure PROD folder path for workflow ${workflow_id}: $(jq -r '(.path // []) | join("/")' "$folder_map_file")"
+
+  local escaped_path_json
+  escaped_path_json="${folder_path_json//\'/\'\'}"
+
+  ssh "${PROD_SSH_OPTS[@]}" "$PROD_REMOTE" "docker exec '$PROD_PG_CONTAINER' psql -U n8n -d n8n -v ON_ERROR_STOP=1 -c \"
+    do \\\$\\\$
+    declare
+      path jsonb := '${escaped_path_json}'::jsonb;
+      part text;
+      current_parent text := null;
+      current_id text;
+      idx integer;
+    begin
+      if to_regclass('public.folder') is null then
+        raise notice 'n8n folder table not found; skip folder sync';
+        return;
+      end if;
+
+      if not exists (
+        select 1 from information_schema.columns
+        where table_name = 'workflow_entity' and column_name = 'parentFolderId'
+      ) then
+        raise notice 'workflow_entity.parentFolderId column not found; skip folder sync';
+        return;
+      end if;
+
+      for idx in 0..jsonb_array_length(path)-1 loop
+        part := path ->> idx;
+
+        select id into current_id
+        from folder
+        where name = part
+          and \"projectId\" = '${PROD_PROJECT_ID}'
+          and (
+            (current_parent is null and \"parentFolderId\" is null)
+            or \"parentFolderId\" = current_parent
+          )
+        order by \"createdAt\" asc
+        limit 1;
+
+        if current_id is null then
+          current_id := substr(md5(random()::text || clock_timestamp()::text), 1, 16);
+          insert into folder (id, name, \"parentFolderId\", \"projectId\", \"createdAt\", \"updatedAt\")
+          values (current_id, part, current_parent, '${PROD_PROJECT_ID}', now(), now());
+        end if;
+
+        current_parent := current_id;
+        current_id := null;
+      end loop;
+
+      update workflow_entity
+      set \"parentFolderId\" = current_parent, \"updatedAt\" = now()
+      where id = '${workflow_id}';
+    end
+    \\\$\\\$;
+  \""
+}
+
 MAP_FILE="${MAP_DIR}/$(basename "${WF_FILE%.json}").credentials.json"
 
 echo "[0] Validate and apply workflow credential mapping"
@@ -380,10 +457,12 @@ if [[ -n "${SUB_WORKFLOW_IDS_CSV:-}" ]]; then
 
     echo "    Push selected sub-workflow: $sub_id"
     import_workflow_file_to_prod "$sub_file" "$sub_id"
+    apply_workflow_folder_path_to_prod "$sub_id"
   done
 fi
 
 echo "    Push main workflow: $WORKFLOW_ID"
 import_workflow_file_to_prod "$WF_FILE" "$WORKFLOW_ID"
+apply_workflow_folder_path_to_prod "$WORKFLOW_ID"
 
 echo "[3] Done"
