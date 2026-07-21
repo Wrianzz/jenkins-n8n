@@ -11,7 +11,7 @@ def exportWorkflowFromDev(String sshCredId, String workflowId, String selectedSu
       chmod +x scripts/export-to-git.sh
       export SSH_KEY_FILE
 
-      scripts/export-to-git.sh "${workflowId}" "${selectedSubWorkflowIds}"
+      bash scripts/export-to-git.sh "${workflowId}" "${selectedSubWorkflowIds}"
     """
   }
 }
@@ -288,7 +288,7 @@ def deployFromRepoToProd(String sshCredId, String workflowId, String selectedSub
       chmod +x scripts/deploy-from-git.sh scripts/promote-creds.sh
       export SSH_KEY_FILE
 
-      scripts/deploy-from-git.sh "${workflowId}" "${selectedSubWorkflowIdsArg}"
+      bash scripts/deploy-from-git.sh "${workflowId}" "${selectedSubWorkflowIdsArg}"
     """
   }
 }
