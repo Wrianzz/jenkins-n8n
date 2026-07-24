@@ -1,8 +1,8 @@
 def lib = library(
-  identifier: 'cicd-n8n-library@master', 
+  identifier: 'cicd-n8n-library@master',
   retriever: modernSCM([
     $class: 'GitSCMSource',
-    remote: 'http://atlassian.satnusa.com:7990/scm/jsl/cicd-n8n-library.git', 
+    remote: 'http://atlassian.satnusa.com:7990/scm/jsl/cicd-n8n-library.git',
     credentialsId: 'bitbucket-satnusa-account'
   ])
 )
@@ -19,30 +19,29 @@ pipeline {
   }
 
   environment {
-    WORKFLOW_ID = 'EmmBXc2Kh7Sb8QfH'
+    WORKFLOW_ID = 'vZKma9MU6KhxsPNI'
 
     SSH_CRED_ID  = 'n8n-cross-server-ssh'
     DEV_SSH_HOST = '192.168.88.20'
     DEV_SSH_USER = 'jenkins'
     DEV_SSH_PORT = '22'
 
-    PROD_SSH_HOST = '192.168.88.82'
+    PROD_SSH_HOST = '192.168.88.80'
     PROD_SSH_USER = 'jenkins'
     PROD_SSH_PORT = '22'
-    PROD_N8N_API_BASE_URL = 'https://192.168.88.82:8443/api/v1'
+    PROD_N8N_API_BASE_URL = 'https://n8nprod.satnusa.com/api/v1'
     PROD_N8N_API_KEY_CRED_ID = 'n8n-production-api-key'
 
-    DEV_CONTAINER     = 'n8n'
-    DEV_PG_CONTAINER  = 'n8n-compose-postgres-dev-1'
-    PROD_CONTAINER    = 'n8n-compose-n8n-prod-1'
-    PROD_PG_CONTAINER = 'n8n-compose-postgres-prod-1'
+    DEV_CONTAINER     = 'n8n-dev'
+    DEV_PG_CONTAINER  = 'n8n-dev-postgres'
+    PROD_CONTAINER    = 'n8n-prod'
+    PROD_PG_CONTAINER = 'n8n-prod-postgres'
 
     REPO_HTTP = 'http://atlassian.satnusa.com:7990/scm/dvo/n8n-cicd-workflows.git'
     GIT_CRED_ID = 'bitbucket-satnusa-account'
 
-    APPROVER = 'o.midiyanto, omidiyanto, fathur.morax'
-    APPROVER_EMAIL = 'o.midiyanto@satnusa.com, omidiyanto7@gmail.com, arthurwiriansyah@gmail.com'
-    SELECTED_SUBWORKFLOW_IDS = ''
+    APPROVER = 'o.midiyanto, fathur.wiriansyah, fathur.morax'
+    APPROVER_EMAIL = 'o.midiyanto@satnusa.com, arthurwiriansyah@gmail.com, arthurwiriansyah13@gmail.com'
   }
 
   stages {
@@ -87,20 +86,25 @@ pipeline {
       }
     }
 
-    stage('Select sub-workflow before approval') {
+    stage('Validate sub-workflow') {
       when {
         expression { params.PIPELINE_MODE in ['DEV_TO_REPO', 'DEV_TO_PROD'] }
       }
       steps {
         script {
           env.SELECTED_SUBWORKFLOW_IDS = DeploymentOps.discoverAndSelectSubWorkflows(env.SSH_CRED_ID, env.WORKFLOW_ID) ?: ''
+
           if (env.SELECTED_SUBWORKFLOW_IDS?.trim()) {
-            DeploymentOps.exportWorkflowFromDev(env.SSH_CRED_ID, env.WORKFLOW_ID, env.SELECTED_SUBWORKFLOW_IDS)
+            DeploymentOps.exportWorkflowFromDev(
+              env.SSH_CRED_ID,
+              env.WORKFLOW_ID,
+              env.SELECTED_SUBWORKFLOW_IDS
+            )
           }
         }
       }
     }
-    
+
     stage('Commit & push workflow file only') {
       when {
         expression { params.PIPELINE_MODE in ['DEV_TO_REPO', 'DEV_TO_PROD'] }
@@ -120,17 +124,26 @@ pipeline {
 
     stage('Validate non-production credentials') {
       when {
-        expression { 
+        expression {
           params.PIPELINE_MODE in ['REPO_TO_PROD', 'DEV_TO_PROD']
         }
       }
       steps {
         script {
           if (!env.SELECTED_SUBWORKFLOW_IDS?.trim()) {
-            env.SELECTED_SUBWORKFLOW_IDS = DeploymentOps.discoverSubWorkflowIdsFromFile(env.WORKFLOW_ID) ?: ''
+            env.SELECTED_SUBWORKFLOW_IDS = DeploymentOps.discoverSubWorkflowIdsFromRemoteWorkflowBranch(
+              env.GIT_CRED_ID,
+              env.WORKFLOW_ID
+            ) ?: ''
+
             echo "Auto-discovered sub-workflow IDs for validation/deploy: ${env.SELECTED_SUBWORKFLOW_IDS ?: '(none)'}"
           }
-          DeploymentOps.validateWorkflowCredentialsOnly(env.GIT_CRED_ID, env.WORKFLOW_ID, env.SELECTED_SUBWORKFLOW_IDS ?: '')
+
+          DeploymentOps.validateWorkflowCredentialsOnly(
+            env.GIT_CRED_ID,
+            env.WORKFLOW_ID,
+            env.SELECTED_SUBWORKFLOW_IDS ?: ''
+          )
         }
       }
     }
@@ -152,6 +165,7 @@ pipeline {
 
           env.FIRST_APPROVER  = approvalInfo.firstApprover ?: ''
           env.SECOND_APPROVER = approvalInfo.secondApprover ?: ''
+
           echo "Approval completed. Level 1: ${env.FIRST_APPROVER}, Level 2: ${env.SECOND_APPROVER}"
         }
       }
@@ -180,7 +194,11 @@ pipeline {
       }
       steps {
         script {
-          DeploymentOps.deployFromRepoToProd(env.SSH_CRED_ID, env.WORKFLOW_ID, env.SELECTED_SUBWORKFLOW_IDS ?: '')
+          DeploymentOps.deployFromRepoToProd(
+            env.SSH_CRED_ID,
+            env.WORKFLOW_ID,
+            env.SELECTED_SUBWORKFLOW_IDS ?: ''
+          )
         }
       }
     }
@@ -199,6 +217,7 @@ pipeline {
         )
       }
     }
+
     failure {
       script {
         sendEmailTemplate(
@@ -211,6 +230,7 @@ pipeline {
         )
       }
     }
+
     aborted {
       script {
         sendEmailTemplate(
@@ -223,6 +243,7 @@ pipeline {
         )
       }
     }
+
     always {
       script {
         cleanWs()
