@@ -55,7 +55,6 @@ def commitAndPushWorkflowOnly(String gitCredId, String workflowId, String select
       trap 'rm -rf "\$EXPORT_TMP_DIR"' EXIT
       cp "workflows/${workflowId}.json" "\$EXPORT_TMP_DIR/${workflowId}.json"
       [ -f "workflows/credential-maps/${workflowId}.credentials.json" ] && cp "workflows/credential-maps/${workflowId}.credentials.json" "\$EXPORT_TMP_DIR/${workflowId}.credentials.json" || true
-      [ -f "workflows/folder-maps/${workflowId}.folder.json" ] && cp "workflows/folder-maps/${workflowId}.folder.json" "\$EXPORT_TMP_DIR/${workflowId}.folder.json" || true
 
       if [ -n "${selectedSubWorkflowIdsArg}" ]; then
         SUB_IDS_NORMALIZED="\$(echo "${selectedSubWorkflowIdsArg}" | tr ',\\n\\r\\t' '    ')"
@@ -64,7 +63,6 @@ def commitAndPushWorkflowOnly(String gitCredId, String workflowId, String select
           [ -n "\$_sid_trim" ] || continue
           [ -f "workflows/\${_sid_trim}.json" ] && cp "workflows/\${_sid_trim}.json" "\$EXPORT_TMP_DIR/\${_sid_trim}.json" || true
           [ -f "workflows/credential-maps/\${_sid_trim}.credentials.json" ] && cp "workflows/credential-maps/\${_sid_trim}.credentials.json" "\$EXPORT_TMP_DIR/\${_sid_trim}.credentials.json" || true
-          [ -f "workflows/folder-maps/\${_sid_trim}.folder.json" ] && cp "workflows/folder-maps/\${_sid_trim}.folder.json" "\$EXPORT_TMP_DIR/\${_sid_trim}.folder.json" || true
         done
       fi
 
@@ -76,19 +74,13 @@ def commitAndPushWorkflowOnly(String gitCredId, String workflowId, String select
         if git cat-file -e "origin/workflow/${workflowId}:workflows/credential-maps/${workflowId}.credentials.json" 2>/dev/null; then
           git checkout "origin/workflow/${workflowId}" -- "workflows/credential-maps/${workflowId}.credentials.json"
         fi
-        if git cat-file -e "origin/workflow/${workflowId}:workflows/folder-maps/${workflowId}.folder.json" 2>/dev/null; then
-          git checkout "origin/workflow/${workflowId}" -- "workflows/folder-maps/${workflowId}.folder.json"
-        fi
       fi
       find workflows -maxdepth 1 -type f -name '*.json' ! -name '${workflowId}.json' -delete
       mkdir -p workflows/credential-maps
-      mkdir -p workflows/folder-maps
       find workflows/credential-maps -maxdepth 1 -type f -name '*.credentials.json' ! -name '${workflowId}.credentials.json' -delete
-      find workflows/folder-maps -maxdepth 1 -type f -name '*.folder.json' ! -name '${workflowId}.folder.json' -delete
       cp "\$EXPORT_TMP_DIR/${workflowId}.json" "workflows/${workflowId}.json"
       find workflows/credential-maps -maxdepth 1 -type f -name '*.credentials.json' ! -name '${workflowId}.credentials.json' -delete
       [ -f "\$EXPORT_TMP_DIR/${workflowId}.credentials.json" ] && cp "\$EXPORT_TMP_DIR/${workflowId}.credentials.json" "workflows/credential-maps/${workflowId}.credentials.json" || true
-      [ -f "\$EXPORT_TMP_DIR/${workflowId}.folder.json" ] && cp "\$EXPORT_TMP_DIR/${workflowId}.folder.json" "workflows/folder-maps/${workflowId}.folder.json" || true
       git add -A workflows
       if git diff --cached --quiet; then
         echo "[INFO] No changes to commit for workflows/${workflowId}.json"
@@ -114,18 +106,12 @@ def commitAndPushWorkflowOnly(String gitCredId, String workflowId, String select
             if git cat-file -e "origin/workflow/\${_sid_trim}:workflows/credential-maps/\${_sid_trim}.credentials.json" 2>/dev/null; then
               git checkout "origin/workflow/\${_sid_trim}" -- "workflows/credential-maps/\${_sid_trim}.credentials.json"
             fi
-            if git cat-file -e "origin/workflow/\${_sid_trim}:workflows/folder-maps/\${_sid_trim}.folder.json" 2>/dev/null; then
-              git checkout "origin/workflow/\${_sid_trim}" -- "workflows/folder-maps/\${_sid_trim}.folder.json"
-            fi
           fi
           find workflows -maxdepth 1 -type f -name '*.json' ! -name "\${_sid_trim}.json" -delete
           mkdir -p workflows/credential-maps
-          mkdir -p workflows/folder-maps
           find workflows/credential-maps -maxdepth 1 -type f -name '*.credentials.json' ! -name "\${_sid_trim}.credentials.json" -delete
-          find workflows/folder-maps -maxdepth 1 -type f -name '*.folder.json' ! -name "\${_sid_trim}.folder.json" -delete
           cp "\$EXPORT_TMP_DIR/\${_sid_trim}.json" "workflows/\${_sid_trim}.json"
           [ -f "\$EXPORT_TMP_DIR/\${_sid_trim}.credentials.json" ] && cp "\$EXPORT_TMP_DIR/\${_sid_trim}.credentials.json" "workflows/credential-maps/\${_sid_trim}.credentials.json" || true
-          [ -f "\$EXPORT_TMP_DIR/\${_sid_trim}.folder.json" ] && cp "\$EXPORT_TMP_DIR/\${_sid_trim}.folder.json" "workflows/folder-maps/\${_sid_trim}.folder.json" || true
           git add -A workflows
           if git diff --cached --quiet; then
             echo "[INFO] No changes to commit for workflows/\${_sid_trim}.json"
@@ -163,13 +149,12 @@ def promoteWorkflowToMaster(String gitCredId, String workflowId, String selected
       git remote set-url origin "http://\${GH_USER}:\${GH_PASS}@atlassian.satnusa.com:7990/scm/dvo/n8n-cicd-workflows.git"
 
       git fetch origin master "workflow/${workflowId}"
+      git reset --hard HEAD
+      git clean -fd
       git checkout -B master origin/master
       git checkout "origin/workflow/${workflowId}" -- "workflows/${workflowId}.json"
       if git cat-file -e "origin/workflow/${workflowId}:workflows/credential-maps/${workflowId}.credentials.json" 2>/dev/null; then
         git checkout "origin/workflow/${workflowId}" -- "workflows/credential-maps/${workflowId}.credentials.json"
-      fi
-      if git cat-file -e "origin/workflow/${workflowId}:workflows/folder-maps/${workflowId}.folder.json" 2>/dev/null; then
-        git checkout "origin/workflow/${workflowId}" -- "workflows/folder-maps/${workflowId}.folder.json"
       fi
       if [ -n "${selectedSubWorkflowIdsArg}" ]; then
         SUB_IDS_NORMALIZED="\$(echo "${selectedSubWorkflowIdsArg}" | tr ',\\n\\r\\t' '    ')"
@@ -182,19 +167,14 @@ def promoteWorkflowToMaster(String gitCredId, String workflowId, String selected
             if git cat-file -e "origin/workflow/\${_sid_trim}:workflows/credential-maps/\${_sid_trim}.credentials.json" 2>/dev/null; then
               git checkout "origin/workflow/\${_sid_trim}" -- "workflows/credential-maps/\${_sid_trim}.credentials.json"
             fi
-            if git cat-file -e "origin/workflow/\${_sid_trim}:workflows/folder-maps/\${_sid_trim}.folder.json" 2>/dev/null; then
-              git checkout "origin/workflow/\${_sid_trim}" -- "workflows/folder-maps/\${_sid_trim}.folder.json"
-            fi
           fi
         done
       fi
 
-      mkdir -p workflows/credential-maps workflows/folder-maps
-
-      if git diff --quiet HEAD -- workflows; then
+      if git diff --quiet HEAD -- workflows/*.json workflows/credential-maps/*.credentials.json; then
         echo "[INFO] workflows/${workflowId}.json already up to date in master"
       else
-        git add -A workflows
+        git add workflows/*.json workflows/credential-maps/*.credentials.json
         git commit -m "promote workflow ${workflowId} and selected sub-workflows from workflow branch to master"
         git push origin HEAD:master
       fi
