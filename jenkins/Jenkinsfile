@@ -16,6 +16,16 @@ pipeline {
       choices: ['DEV_TO_REPO', 'REPO_TO_PROD', 'DEV_TO_PROD'],
       description: 'Pilih mode pipeline: DEV_TO_REPO | REPO_TO_PROD | DEV_TO_PROD'
     )
+    choice(
+      name: 'DEV_DEPLOY_TARGET',
+      choices: ['docker', 'kubernetes'],
+      description: 'Runtime n8n DEV untuk export workflow: docker atau kubernetes/kubectl'
+    )
+    choice(
+      name: 'PROD_DEPLOY_TARGET',
+      choices: ['docker', 'kubernetes'],
+      description: 'Runtime n8n PROD untuk import/publish workflow: docker atau kubernetes/kubectl'
+    )
   }
 
   environment {
@@ -32,10 +42,27 @@ pipeline {
     PROD_N8N_API_BASE_URL = 'https://n8nprod.satnusa.com/api/v1'
     PROD_N8N_API_KEY_CRED_ID = 'n8n-production-api-key'
 
-    DEV_CONTAINER     = 'n8n-dev'
-    DEV_PG_CONTAINER  = 'n8n-dev-postgres'
-    PROD_CONTAINER    = 'n8n-prod'
-    PROD_PG_CONTAINER = 'n8n-prod-postgres'
+    DEV_CONTAINER = 'n8n-dev'
+    DEV_K8S_NAMESPACE = 'n8n-dev'
+    DEV_K8S_POD_SELECTOR = 'app=n8n'
+    DEV_K8S_CONTAINER = 'n8n'
+
+    DEV_PG_HOST = '192.168.88.20'
+    DEV_PG_PORT = '5432'
+    DEV_PG_DATABASE = 'n8n'
+    DEV_PG_USER = 'n8n'
+    DEV_PG_PASSWORD_CRED_ID = 'n8n-dev-postgres-password'
+
+    PROD_CONTAINER = 'n8n-prod'
+    PROD_K8S_NAMESPACE = 'n8n-prod'
+    PROD_K8S_POD_SELECTOR = 'app=n8n'
+    PROD_K8S_CONTAINER = 'n8n'
+
+    PROD_PG_HOST = '192.168.88.80'
+    PROD_PG_PORT = '5432'
+    PROD_PG_DATABASE = 'n8n'
+    PROD_PG_USER = 'n8n'
+    PROD_PG_PASSWORD_CRED_ID = 'n8n-prod-postgres-password'
 
     REPO_HTTP = 'http://atlassian.satnusa.com:7990/scm/dvo/n8n-cicd-workflows.git'
     GIT_CRED_ID = 'bitbucket-satnusa-account'
@@ -81,7 +108,7 @@ pipeline {
       }
       steps {
         script {
-          DeploymentOps.exportWorkflowFromDev(env.SSH_CRED_ID, env.WORKFLOW_ID)
+          DeploymentOps.exportWorkflowFromDev(env.SSH_CRED_ID, env.WORKFLOW_ID, '', params.DEV_DEPLOY_TARGET)
         }
       }
     }
@@ -92,13 +119,14 @@ pipeline {
       }
       steps {
         script {
-          env.SELECTED_SUBWORKFLOW_IDS = DeploymentOps.discoverAndSelectSubWorkflows(env.SSH_CRED_ID, env.WORKFLOW_ID) ?: ''
+          env.SELECTED_SUBWORKFLOW_IDS = DeploymentOps.discoverAndSelectSubWorkflows(env.SSH_CRED_ID, env.WORKFLOW_ID, params.DEV_DEPLOY_TARGET) ?: ''
 
           if (env.SELECTED_SUBWORKFLOW_IDS?.trim()) {
             DeploymentOps.exportWorkflowFromDev(
               env.SSH_CRED_ID,
               env.WORKFLOW_ID,
-              env.SELECTED_SUBWORKFLOW_IDS
+              env.SELECTED_SUBWORKFLOW_IDS,
+              params.DEV_DEPLOY_TARGET
             )
           }
         }
@@ -197,7 +225,8 @@ pipeline {
           DeploymentOps.deployFromRepoToProd(
             env.SSH_CRED_ID,
             env.WORKFLOW_ID,
-            env.SELECTED_SUBWORKFLOW_IDS ?: ''
+            env.SELECTED_SUBWORKFLOW_IDS ?: '',
+            params.PROD_DEPLOY_TARGET
           )
         }
       }

@@ -10,8 +10,16 @@ set -euo pipefail
 PROD_SSH_HOST="${PROD_SSH_HOST:?PROD_SSH_HOST is required}"
 PROD_SSH_USER="${PROD_SSH_USER:-}"
 PROD_SSH_PORT="${PROD_SSH_PORT:-22}"
+PROD_DEPLOY_TARGET="${PROD_DEPLOY_TARGET:-docker}"
 PROD_CONTAINER="${PROD_CONTAINER:-n8n-prod-n8n-prod-1}"
-PROD_PG_CONTAINER="${PROD_PG_CONTAINER:-n8n-prod-postgres-prod-1}"
+PROD_K8S_NAMESPACE="${PROD_K8S_NAMESPACE:-default}"
+PROD_K8S_POD_SELECTOR="${PROD_K8S_POD_SELECTOR:-app=n8n}"
+PROD_K8S_CONTAINER="${PROD_K8S_CONTAINER:-}"
+PROD_PG_HOST="${PROD_PG_HOST:?PROD_PG_HOST is required}"
+PROD_PG_PORT="${PROD_PG_PORT:-5432}"
+PROD_PG_DATABASE="${PROD_PG_DATABASE:-n8n}"
+PROD_PG_USER="${PROD_PG_USER:-n8n}"
+PROD_PG_PASSWORD="${PROD_PG_PASSWORD:-}"
 SSH_KEY_FILE="${SSH_KEY_FILE:-}"
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -26,6 +34,50 @@ if [[ -n "$SSH_KEY_FILE" ]]; then
   PROD_SSH_OPTS+=( -i "$SSH_KEY_FILE" )
   PROD_SCP_OPTS+=( -i "$SSH_KEY_FILE" )
 fi
+
+remote_quote() {
+  printf "%q" "$1"
+}
+
+remote_psql() {
+  local sql="$1"
+  local quoted_sql
+  quoted_sql="$(remote_quote "$sql")"
+
+  ssh "${PROD_SSH_OPTS[@]}" "$PROD_REMOTE" \
+    "PGPASSWORD=$(remote_quote "$PROD_PG_PASSWORD") psql -h $(remote_quote "$PROD_PG_HOST") -p $(remote_quote "$PROD_PG_PORT") -U $(remote_quote "$PROD_PG_USER") -d $(remote_quote "$PROD_PG_DATABASE") -tA -c $quoted_sql"
+}
+
+prod_kubectl_exec_prefix() {
+  local pod_cmd container_arg
+  pod_cmd="kubectl -n $(remote_quote "$PROD_K8S_NAMESPACE") get pod -l $(remote_quote "$PROD_K8S_POD_SELECTOR") -o jsonpath='{.items[0].metadata.name}'"
+  container_arg=""
+  if [[ -n "$PROD_K8S_CONTAINER" ]]; then
+    container_arg="-c $(remote_quote "$PROD_K8S_CONTAINER")"
+  fi
+
+  printf "pod=\\$(%s); test -n \\\"\\$pod\\\"; kubectl -n %s exec \\\"\\$pod\\\" %s --" \
+    "$pod_cmd" "$(remote_quote "$PROD_K8S_NAMESPACE")" "$container_arg"
+}
+
+n8n_exec() {
+  local inner="$1"
+
+  case "$PROD_DEPLOY_TARGET" in
+    docker)
+      ssh "${PROD_SSH_OPTS[@]}" "$PROD_REMOTE" \
+        "docker exec '$PROD_CONTAINER' sh -lc $(remote_quote "$inner")"
+      ;;
+    kubernetes|kubectl)
+      ssh "${PROD_SSH_OPTS[@]}" "$PROD_REMOTE" \
+        "$(prod_kubectl_exec_prefix) sh -lc $(remote_quote "$inner")"
+      ;;
+    *)
+      echo "[ERR] Unsupported PROD_DEPLOY_TARGET: $PROD_DEPLOY_TARGET (use docker or kubernetes)"
+      exit 1
+      ;;
+  esac
+}
 
 VALIDATE_ONLY=0
 
@@ -96,8 +148,7 @@ sync_and_move_to_prod_folder() {
   fi
 
   if [ -z "${PROD_PROJECT_ID:-}" ]; then
-    PROD_PROJECT_ID="$(ssh "${PROD_SSH_OPTS[@]}" "$PROD_REMOTE" \
-      "docker exec -i '$PROD_PG_CONTAINER' psql -U n8n -d n8n -tA -c \"select id from project order by \\\"createdAt\\\" asc limit 1;\"" | tr -d '\r' | xargs)"
+    PROD_PROJECT_ID="$(remote_psql 'select id from project order by "createdAt" asc limit 1;' | tr -d '\r' | xargs)"
   fi
 
   [[ -n "$PROD_PROJECT_ID" ]] || {
@@ -121,8 +172,7 @@ sync_and_move_to_prod_folder() {
     fi
 
     local matched_id
-    matched_id=$(ssh "${PROD_SSH_OPTS[@]}" "$PROD_REMOTE" \
-      "docker exec -i '$PROD_PG_CONTAINER' psql -U n8n -d n8n -tA -c \"$check_query\"" | tr -d '\r' | xargs)
+    matched_id=$(remote_psql "$check_query" | tr -d '\r' | xargs)
 
     # 2. Jika ID kosong (folder benar-benar tidak ada di DB), buat via API POST
     if [ -z "$matched_id" ] || [ "$matched_id" = "null" ]; then
@@ -156,8 +206,7 @@ sync_and_move_to_prod_folder() {
 
   echo "      Moving workflow ${wf_id} into PROD folder ID: $current_parent_id via Database"
   local move_res
-  move_res=$(ssh "${PROD_SSH_OPTS[@]}" "$PROD_REMOTE" \
-    "docker exec -i '$PROD_PG_CONTAINER' psql -U n8n -d n8n -tA -c \"UPDATE workflow_entity SET \\\"parentFolderId\\\" = '$current_parent_id' WHERE id = '${wf_id}' RETURNING id;\"" | tr -d '\r' | xargs)
+  move_res=$(remote_psql "UPDATE workflow_entity SET \"parentFolderId\" = '$current_parent_id' WHERE id = '${wf_id}' RETURNING id;" | tr -d '\r' | xargs)
 
   if [[ "$move_res" == *"UPDATE 1"* ]] || [[ "$move_res" == *"$wf_id"* ]]; then
     echo "    [OK] Successfully moved workflow ${wf_id} to '$target_path' in PROD."
@@ -398,18 +447,36 @@ import_workflow_file_to_prod() {
   echo "    Copy workflow file to PROD host: $host_file"
   scp "${PROD_SCP_OPTS[@]}" "$local_file" "$PROD_REMOTE:$host_file"
 
-  echo "    Import workflow to PROD container: $workflow_id"
-  ssh "${PROD_SSH_OPTS[@]}" "$PROD_REMOTE" \
-    "docker cp '$host_file' '$PROD_CONTAINER:$container_file' && \
-     docker exec -u 0 '$PROD_CONTAINER' n8n import:workflow --input '$container_file' --projectId '$PROD_PROJECT_ID'"
+  echo "    Import workflow to PROD ${PROD_DEPLOY_TARGET}: $workflow_id"
+  case "$PROD_DEPLOY_TARGET" in
+    docker)
+      ssh "${PROD_SSH_OPTS[@]}" "$PROD_REMOTE" \
+        "docker cp '$host_file' '$PROD_CONTAINER:$container_file' && \
+         docker exec -u 0 '$PROD_CONTAINER' n8n import:workflow --input '$container_file' --projectId '$PROD_PROJECT_ID'"
+      ;;
+    kubernetes|kubectl)
+      local container_arg=""
+      if [[ -n "$PROD_K8S_CONTAINER" ]]; then
+        container_arg="-c $(remote_quote "$PROD_K8S_CONTAINER")"
+      fi
+      ssh "${PROD_SSH_OPTS[@]}" "$PROD_REMOTE" \
+        "pod=\$(kubectl -n $(remote_quote "$PROD_K8S_NAMESPACE") get pod -l $(remote_quote "$PROD_K8S_POD_SELECTOR") -o jsonpath='{.items[0].metadata.name}'); \
+         test -n \"\$pod\"; \
+         kubectl -n $(remote_quote "$PROD_K8S_NAMESPACE") cp '$host_file' \"\$pod:$container_file\" $container_arg; \
+         kubectl -n $(remote_quote "$PROD_K8S_NAMESPACE") exec \"\$pod\" $container_arg -- n8n import:workflow --input '$container_file' --projectId '$PROD_PROJECT_ID'"
+      ;;
+    *)
+      echo "[ERR] Unsupported PROD_DEPLOY_TARGET: $PROD_DEPLOY_TARGET (use docker or kubernetes)"
+      exit 1
+      ;;
+  esac
 
   echo "    Publish workflow: $workflow_id"
-  ssh "${PROD_SSH_OPTS[@]}" "$PROD_REMOTE" \
-    "docker exec '$PROD_CONTAINER' n8n publish:workflow --id='$workflow_id'"
+  n8n_exec "n8n publish:workflow --id='$workflow_id'"
 
   echo "    Cleanup temp files: $workflow_id"
-  ssh "${PROD_SSH_OPTS[@]}" "$PROD_REMOTE" \
-    "rm -f '$host_file'; docker exec '$PROD_CONTAINER' sh -lc 'rm -f \"$container_file\" || true'"
+  ssh "${PROD_SSH_OPTS[@]}" "$PROD_REMOTE" "rm -f '$host_file'"
+  n8n_exec "rm -f '$container_file' || true"
 }
 
 MAP_FILE="${MAP_DIR}/$(basename "${WF_FILE%.json}").credentials.json"
@@ -441,8 +508,7 @@ if [[ "$VALIDATE_ONLY" -eq 1 ]]; then
   exit 0
 fi
 
-PROD_PROJECT_ID="$(ssh "${PROD_SSH_OPTS[@]}" "$PROD_REMOTE" \
-  "docker exec '$PROD_PG_CONTAINER' psql -U n8n -d n8n -tA -c \"select id from project order by \\\"createdAt\\\" asc limit 1;\"" | tr -d '\r' | xargs)"
+PROD_PROJECT_ID="$(remote_psql 'select id from project order by "createdAt" asc limit 1;' | tr -d '\r' | xargs)"
 
 [[ -n "$PROD_PROJECT_ID" ]] || {
   echo "[ERR] PROD_PROJECT_ID not found"
@@ -482,4 +548,3 @@ import_workflow_file_to_prod "$WF_FILE" "$WORKFLOW_ID"
 sync_and_move_to_prod_folder "$WORKFLOW_ID"
 
 echo "[3] Done"
-
