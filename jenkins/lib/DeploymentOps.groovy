@@ -1,9 +1,10 @@
 // vars/DeploymentOps.groovy
 
-def exportWorkflowFromDev(String sshCredId, String workflowId, String selectedSubWorkflowIds = '') {
+def exportWorkflowFromDev(String sshCredId, String workflowId, String selectedSubWorkflowIds = '', String devDeployTarget = 'docker') {
   withCredentials([
     sshUserPrivateKey(credentialsId: sshCredId, keyFileVariable: 'SSH_KEY_FILE'),
-    string(credentialsId: env.DEV_N8N_API_KEY_CRED_ID, variable: 'DEV_N8N_API_KEY')
+    string(credentialsId: env.DEV_N8N_API_KEY_CRED_ID, variable: 'DEV_N8N_API_KEY'),
+    string(credentialsId: env.DEV_PG_PASSWORD_CRED_ID, variable: 'DEV_PG_PASSWORD')
   ]) {
     sh """
       set -euo pipefail
@@ -14,6 +15,8 @@ def exportWorkflowFromDev(String sshCredId, String workflowId, String selectedSu
       # Lempar ke environment variable bash
       export DEV_N8N_API_BASE_URL="${env.DEV_N8N_API_BASE_URL}"
       export DEV_N8N_API_KEY="\${DEV_N8N_API_KEY}"
+      export DEV_DEPLOY_TARGET="${devDeployTarget}"
+      export DEV_PG_PASSWORD="\${DEV_PG_PASSWORD}"
 
       scripts/export-to-git.sh "${workflowId}" "${selectedSubWorkflowIds}"
     """
@@ -61,7 +64,7 @@ def subWorkflowDiscoveryJq() {
   '''
 }
 
-def discoverAndSelectSubWorkflows(String sshCredId, String workflowId) {
+def discoverAndSelectSubWorkflows(String sshCredId, String workflowId, String devDeployTarget = 'docker') {
   String mainWorkflowFile = "workflows/${workflowId}.json"
   
   if (!fileExists(mainWorkflowFile)) {
@@ -98,7 +101,7 @@ def discoverAndSelectSubWorkflows(String sshCredId, String workflowId) {
 
     // [PENTING] Selalu tarik versi terbaru dari DEV
     echo "[INFO] Discovery: Exporting latest sub-workflow ${subId} from DEV..."
-    exportWorkflowFromDev(sshCredId, subId)
+    exportWorkflowFromDev(sshCredId, subId, '', devDeployTarget)
 
     if (fileExists(currentFile)) {
       // Ambil nama workflow menggunakan jq (support array dan object)
@@ -225,7 +228,7 @@ def normalizeAndFilterSubWorkflowIds(String selectedSubWorkflowIds = '') {
   return ids.join(',')
 }
 
-def deployFromRepoToProd(String sshCredId, String workflowId, String selectedSubWorkflowIds = '') {
+def deployFromRepoToProd(String sshCredId, String workflowId, String selectedSubWorkflowIds = '', String prodDeployTarget = 'docker') {
   String selectedSubWorkflowIdsArg = normalizeAndFilterSubWorkflowIds(selectedSubWorkflowIds)
 
   echo "[DeploymentOps] Selected sub-workflow IDs to push: ${selectedSubWorkflowIdsArg ?: '(none)'}"
@@ -233,7 +236,8 @@ def deployFromRepoToProd(String sshCredId, String workflowId, String selectedSub
   // Tambahkan string credential injection di sini
   withCredentials([
     sshUserPrivateKey(credentialsId: sshCredId, keyFileVariable: 'SSH_KEY_FILE'),
-    string(credentialsId: env.PROD_N8N_API_KEY_CRED_ID, variable: 'PROD_N8N_API_KEY')
+    string(credentialsId: env.PROD_N8N_API_KEY_CRED_ID, variable: 'PROD_N8N_API_KEY'),
+    string(credentialsId: env.PROD_PG_PASSWORD_CRED_ID, variable: 'PROD_PG_PASSWORD')
   ]) {
     sh """
       set -euo pipefail
@@ -243,6 +247,8 @@ def deployFromRepoToProd(String sshCredId, String workflowId, String selectedSub
       # Export variabelnya agar terbaca oleh curl di dalam bash script
       export SSH_KEY_FILE
       export PROD_N8N_API_KEY
+      export PROD_DEPLOY_TARGET="${prodDeployTarget}"
+      export PROD_PG_PASSWORD
 
       scripts/deploy-from-git.sh "${workflowId}" "${selectedSubWorkflowIdsArg}"
     """
