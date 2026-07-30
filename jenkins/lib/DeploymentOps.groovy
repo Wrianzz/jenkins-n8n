@@ -1,15 +1,19 @@
 // vars/DeploymentOps.groovy
 
 def exportWorkflowFromDev(String sshCredId, String workflowId, String selectedSubWorkflowIds = '') {
-  withCredentials([sshUserPrivateKey(
-    credentialsId: sshCredId,
-    keyFileVariable: 'SSH_KEY_FILE'
-  )]) {
+  withCredentials([
+    sshUserPrivateKey(credentialsId: sshCredId, keyFileVariable: 'SSH_KEY_FILE'),
+    string(credentialsId: env.DEV_N8N_API_KEY_CRED_ID, variable: 'DEV_N8N_API_KEY')
+  ]) {
     sh """
       set -euo pipefail
 
       chmod +x scripts/export-to-git.sh
       export SSH_KEY_FILE
+      
+      # Lempar ke environment variable bash
+      export DEV_N8N_API_BASE_URL="${env.DEV_N8N_API_BASE_URL}"
+      export DEV_N8N_API_KEY="\${DEV_N8N_API_KEY}"
 
       scripts/export-to-git.sh "${workflowId}" "${selectedSubWorkflowIds}"
     """
@@ -226,15 +230,19 @@ def deployFromRepoToProd(String sshCredId, String workflowId, String selectedSub
 
   echo "[DeploymentOps] Selected sub-workflow IDs to push: ${selectedSubWorkflowIdsArg ?: '(none)'}"
 
-  withCredentials([sshUserPrivateKey(
-    credentialsId: sshCredId,
-    keyFileVariable: 'SSH_KEY_FILE'
-  )]) {
+  // Tambahkan string credential injection di sini
+  withCredentials([
+    sshUserPrivateKey(credentialsId: sshCredId, keyFileVariable: 'SSH_KEY_FILE'),
+    string(credentialsId: env.PROD_N8N_API_KEY_CRED_ID, variable: 'PROD_N8N_API_KEY')
+  ]) {
     sh """
       set -euo pipefail
 
       chmod +x scripts/deploy-from-git.sh scripts/promote-creds.sh
+      
+      # Export variabelnya agar terbaca oleh curl di dalam bash script
       export SSH_KEY_FILE
+      export PROD_N8N_API_KEY
 
       scripts/deploy-from-git.sh "${workflowId}" "${selectedSubWorkflowIdsArg}"
     """

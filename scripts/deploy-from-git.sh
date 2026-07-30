@@ -78,6 +78,95 @@ workflow_has_credentials() {
   ' "$workflow_file" >/dev/null 2>&1
 }
 
+sync_and_move_to_prod_folder() {
+  local wf_id="$1"
+  local meta_file="${REPO_ROOT}/workflows/metadata/${wf_id}.meta"
+
+  if [ ! -f "$meta_file" ]; then
+    echo "    [INFO] No folder metadata found for ${wf_id}. Staying at Root."
+    return 0
+  fi
+
+  local target_path
+  target_path=$(cat "$meta_file" | xargs)
+
+  if [ -z "$target_path" ]; then
+    echo "    [INFO] Folder metadata is empty for ${wf_id}. Staying at Root."
+    return 0
+  fi
+
+  if [ -z "${PROD_PROJECT_ID:-}" ]; then
+    PROD_PROJECT_ID="$(ssh "${PROD_SSH_OPTS[@]}" "$PROD_REMOTE" \
+      "docker exec -i '$PROD_PG_CONTAINER' psql -U n8n -d n8n -tA -c \"select id from project order by \\\"createdAt\\\" asc limit 1;\"" | tr -d '\r' | xargs)"
+  fi
+
+  [[ -n "$PROD_PROJECT_ID" ]] || {
+    echo "    [ERR] PROD_PROJECT_ID is empty inside folder sync function."
+    exit 1
+  }
+
+  echo "    [PROCESS] Syncing folder structure to PROD: $target_path"
+
+  IFS='/' read -r -a folders_array <<< "$target_path"
+  local current_parent_id="null"
+
+  for folder_name in "${folders_array[@]}"; do
+    
+    # 1. CEK FOLDER VIA DATABASE PROD (Bypass API n8n & WAF Cache)
+    local check_query
+    if [ "$current_parent_id" = "null" ]; then
+      check_query="SELECT id FROM folder WHERE name = '${folder_name}' AND \\\"projectId\\\" = '${PROD_PROJECT_ID}' AND \\\"parentFolderId\\\" IS NULL LIMIT 1;"
+    else
+      check_query="SELECT id FROM folder WHERE name = '${folder_name}' AND \\\"projectId\\\" = '${PROD_PROJECT_ID}' AND \\\"parentFolderId\\\" = '${current_parent_id}' LIMIT 1;"
+    fi
+
+    local matched_id
+    matched_id=$(ssh "${PROD_SSH_OPTS[@]}" "$PROD_REMOTE" \
+      "docker exec -i '$PROD_PG_CONTAINER' psql -U n8n -d n8n -tA -c \"$check_query\"" | tr -d '\r' | xargs)
+
+    # 2. Jika ID kosong (folder benar-benar tidak ada di DB), buat via API POST
+    if [ -z "$matched_id" ] || [ "$matched_id" = "null" ]; then
+      echo "      Creating folder '$folder_name' under parent '$current_parent_id' in PROD..."
+      local json_payload
+      if [ "$current_parent_id" = "null" ]; then
+        json_payload=$(jq -n --arg name "$folder_name" '{name: $name}')
+      else
+        json_payload=$(jq -n --arg name "$folder_name" --arg parent "$current_parent_id" '{name: $name, parentFolderId: $parent}')
+      fi
+
+      local create_res
+      create_res=$(curl -s -k -X POST "${PROD_N8N_API_BASE_URL}/projects/${PROD_PROJECT_ID}/folders" \
+        -H "X-N8N-API-KEY: ${PROD_N8N_API_KEY}" \
+        -H "Content-Type: application/json" \
+        -d "$json_payload")
+      
+      matched_id=$(echo "$create_res" | jq -r '.id // empty')
+      
+      if [ -z "$matched_id" ] || [ "$matched_id" = "null" ]; then
+        echo "      [ERR] Failed to create folder. Response: $create_res"
+        exit 1
+      fi
+    else
+      # 3. Jika sudah ada di DB, lewati pembuatan & gunakan ID yang ditemukan
+      echo "      Folder '$folder_name' already exists (ID: $matched_id). Reusing..."
+    fi
+    
+    current_parent_id="$matched_id"
+  done
+
+  echo "      Moving workflow ${wf_id} into PROD folder ID: $current_parent_id via Database"
+  local move_res
+  move_res=$(ssh "${PROD_SSH_OPTS[@]}" "$PROD_REMOTE" \
+    "docker exec -i '$PROD_PG_CONTAINER' psql -U n8n -d n8n -tA -c \"UPDATE workflow_entity SET \\\"parentFolderId\\\" = '$current_parent_id' WHERE id = '${wf_id}' RETURNING id;\"" | tr -d '\r' | xargs)
+
+  if [[ "$move_res" == *"UPDATE 1"* ]] || [[ "$move_res" == *"$wf_id"* ]]; then
+    echo "    [OK] Successfully moved workflow ${wf_id} to '$target_path' in PROD."
+  else
+    echo "    [ERR] Failed to move workflow to folder via DB. Response: $move_res"
+    exit 1
+  fi
+}
+
 validate_credential_map_schema() {
   local map_path="$1"
 
@@ -380,10 +469,17 @@ if [[ -n "${SUB_WORKFLOW_IDS_CSV:-}" ]]; then
 
     echo "    Push selected sub-workflow: $sub_id"
     import_workflow_file_to_prod "$sub_file" "$sub_id"
+    
+    # [TAMBAHKAN DI SINI UNTUK SUB-WORKFLOW]
+    sync_and_move_to_prod_folder "$sub_id"
   done
 fi
 
 echo "    Push main workflow: $WORKFLOW_ID"
 import_workflow_file_to_prod "$WF_FILE" "$WORKFLOW_ID"
 
+# [TAMBAHKAN DI SINI UNTUK MAIN WORKFLOW]
+sync_and_move_to_prod_folder "$WORKFLOW_ID"
+
 echo "[3] Done"
+
