@@ -23,6 +23,7 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 OUT_DIR="${REPO_ROOT}/workflows"
 TMP_DIR="/tmp/n8n-export-${WORKFLOW_ID}"
 LOCAL_FILE="${TMP_DIR}/${WORKFLOW_ID}.json"
+REMOTE_TMP_DIR="/tmp/n8n-git-${WORKFLOW_ID}"
 REMOTE_HOST="${DEV_SSH_USER:+${DEV_SSH_USER}@}${DEV_SSH_HOST}"
 SSH_OPTS=( -p "$DEV_SSH_PORT" -o BatchMode=yes -o StrictHostKeyChecking=accept-new )
 if [[ -n "$SSH_KEY_FILE" ]]; then
@@ -81,10 +82,10 @@ rm -rf "$TMP_DIR"
 mkdir -p "$TMP_DIR"
 
 echo "[1] Export main workflow on DEV server"
-n8n_exec "rm -rf /tmp/n8n-git && mkdir -p /tmp/n8n-git && n8n export:workflow --id \"$WORKFLOW_ID\" --output /tmp/n8n-git/${WORKFLOW_ID}.json --pretty"
+n8n_exec "rm -rf '${REMOTE_TMP_DIR}' && mkdir -p '${REMOTE_TMP_DIR}' && n8n export:workflow --id \"$WORKFLOW_ID\" --output '${REMOTE_TMP_DIR}/${WORKFLOW_ID}.json' --pretty"
 
 echo "[2] Copy exported file from DEV server"
-n8n_exec "cat '/tmp/n8n-git/${WORKFLOW_ID}.json'" > "$LOCAL_FILE"
+n8n_exec "cat '${REMOTE_TMP_DIR}/${WORKFLOW_ID}.json'" > "$LOCAL_FILE"
 
 echo "[2.5] Fetching Folder & Owner Metadata directly from DEV PostgreSQL"
 
@@ -161,9 +162,12 @@ if [[ -n "$SUB_WORKFLOW_IDS_CSV" ]]; then
     sub_id="$(echo "$sub_id_raw" | xargs)"
     [[ -n "$sub_id" ]] || continue
 
-    n8n_exec "n8n export:workflow --id \"$sub_id\" --output /tmp/n8n-git/${sub_id}.json --pretty"
-    n8n_exec "cat '/tmp/n8n-git/${sub_id}.json'" > "${TMP_DIR}/${sub_id}.json"
+    n8n_exec "n8n export:workflow --id \"$sub_id\" --output '${REMOTE_TMP_DIR}/${sub_id}.json' --pretty"
+    n8n_exec "cat '${REMOTE_TMP_DIR}/${sub_id}.json'" > "${TMP_DIR}/${sub_id}.json"
     jq -S '.' "${TMP_DIR}/${sub_id}.json" > "${OUT_DIR}/${sub_id}.json"
     echo "    Exported sub-workflow: ${OUT_DIR}/${sub_id}.json"
   done
 fi
+
+echo "[6] Cleaning up remote temporary files..."
+n8n_exec "rm -rf '${REMOTE_TMP_DIR}'"
