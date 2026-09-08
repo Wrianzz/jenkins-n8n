@@ -15,105 +15,124 @@ def requestTwoApprovals(String pipelineMode, String workflowId, String submitter
     approverEmailMap[approvers[i]] = (i < approverEmails.size()) ? approverEmails[i] : ''
   }
 
-  // =========================
-  // APPROVAL LEVEL 1
-  // =========================
-  sendEmailTemplate(
-    MAILMODE: 'APPROVAL_REQUIRED',
-    RECIPIENT_EMAIL: joinCsv(approverEmails),
-    RECIPIENT_NAME: approvers.join(', '),
-    EXTRA_DATA: [
-      approvalLevel: 1
-    ]
-  )
-
-  def firstApprovalRaw = input(
-    id: "approval-l1-${env.BUILD_NUMBER}",
-    message: "Mode ${pipelineMode}: Approval level 1 required",
-    ok: 'Approve Level 1',
-    submitter: approvers.join(','),
-    submitterParameter: 'FIRST_APPROVER'
-  )
-
-  String firstApprover = extractApprover(firstApprovalRaw, 'FIRST_APPROVER')
-  if (!firstApprover) {
-    error("[PipelineGuard] Failed to read the first approver from the input step.")
-  }
-
-  echo "[PipelineGuard] Approval level 1 granted by: ${firstApprover}"
-
-  // =========================
-  // APPROVAL LEVEL 2
-  // =========================
-  List<String> remainingApprovers = approvers.findAll { it != firstApprover }
-  if (remainingApprovers.isEmpty()) {
-    error("[PipelineGuard] There are no remaining approvers for approval level 2.")
-  }
-
-  List<String> remainingEmails = []
-  for (String approver : remainingApprovers) {
-    String email = approverEmailMap[approver]
-    if (email?.trim()) {
-      remainingEmails << email.trim()
-    }
-  }
-
-  sendEmailTemplate(
-    MAILMODE: 'APPROVAL_REQUIRED',
-    RECIPIENT_EMAIL: joinCsv(remainingEmails),
-    RECIPIENT_NAME: remainingApprovers.join(', '),
-    EXTRA_DATA: [
-      approvalLevel: 2,
-      previousApprover: firstApprover
-    ]
-  )
-
-  String secondApprover = ''
-  int secondApprovalAttempt = 0
-  int maxSecondApprovalAttempts = 10
-
-  while (!secondApprover) {
-    secondApprovalAttempt++
-
-    if (secondApprovalAttempt > maxSecondApprovalAttempts) {
-      error("[PipelineGuard] Second approval failed after ${maxSecondApprovalAttempts} invalid attempts.")
-    }
-
-    def secondApprovalRaw = input(
-      id: "approval-l2-${env.BUILD_NUMBER}-${secondApprovalAttempt}",
-      message: """Mode ${pipelineMode}: approval level 2 required.
-Approval level 1 granted by ${firstApprover}.
-Second approver must be different from the first approver.""",
-      ok: 'Approve Level 2',
-      submitter: remainingApprovers.join(','),
-      submitterParameter: 'SECOND_APPROVER'
+  try {
+    // =========================
+    // APPROVAL LEVEL 1
+    // =========================
+    sendEmailTemplate(
+      MAILMODE: 'APPROVAL_REQUIRED',
+      RECIPIENT_EMAIL: joinCsv(approverEmails),
+      RECIPIENT_NAME: approvers.join(', '),
+      EXTRA_DATA: [
+        approvalLevel: 1
+      ]
     )
 
-    String candidateApprover = extractApprover(secondApprovalRaw, 'SECOND_APPROVER')
-    if (!candidateApprover) {
-      echo "[PipelineGuard] Failed to read the second approver. Waiting for another approval input..."
-      continue
+    def firstApprovalRaw
+    // Timeout 1 Jam untuk Approval 1
+    timeout(time: 1, unit: 'HOURS') {
+      firstApprovalRaw = input(
+        id: "approval-l1-${env.BUILD_NUMBER}",
+        message: "Mode ${pipelineMode}: Approval level 1 required",
+        ok: 'Approve Level 1',
+        submitter: approvers.join(','),
+        submitterParameter: 'FIRST_APPROVER'
+      )
     }
 
-    // Safety net:
-    // admin Jenkins can still respond to input step,
-    // so we validate again to ensure approver 2 != approver 1
-    if (candidateApprover == firstApprover) {
-      echo "[PipelineGuard] ${candidateApprover} already approved level 1, so they cannot approve level 2. Waiting for a different approver..."
-      continue
+    String firstApprover = extractApprover(firstApprovalRaw, 'FIRST_APPROVER')
+    if (!firstApprover) {
+      error("[PipelineGuard] Failed to read the first approver from the input step.")
     }
 
-    secondApprover = candidateApprover
+    echo "[PipelineGuard] Approval level 1 granted by: ${firstApprover}"
+
+    // =========================
+    // APPROVAL LEVEL 2
+    // =========================
+    List<String> remainingApprovers = approvers.findAll { it != firstApprover }
+    if (remainingApprovers.isEmpty()) {
+      error("[PipelineGuard] There are no remaining approvers for approval level 2.")
+    }
+
+    List<String> remainingEmails = []
+    for (String approver : remainingApprovers) {
+      String email = approverEmailMap[approver]
+      if (email?.trim()) {
+        remainingEmails << email.trim()
+      }
+    }
+
+    sendEmailTemplate(
+      MAILMODE: 'APPROVAL_REQUIRED',
+      RECIPIENT_EMAIL: joinCsv(remainingEmails),
+      RECIPIENT_NAME: remainingApprovers.join(', '),
+      EXTRA_DATA: [
+        approvalLevel: 2,
+        previousApprover: firstApprover
+      ]
+    )
+
+    String secondApprover = ''
+    int secondApprovalAttempt = 0
+    int maxSecondApprovalAttempts = 10
+
+    // Timeout 1 Jam untuk Keseluruhan Proses Approval 2
+    // (Timer ter-reset dan mulai dari 0 lagi setelah masuk blok ini)
+    timeout(time: 1, unit: 'HOURS') {
+      while (!secondApprover) {
+        secondApprovalAttempt++
+
+        if (secondApprovalAttempt > maxSecondApprovalAttempts) {
+          error("[PipelineGuard] Second approval failed after ${maxSecondApprovalAttempts} invalid attempts.")
+        }
+
+        def secondApprovalRaw = input(
+          id: "approval-l2-${env.BUILD_NUMBER}-${secondApprovalAttempt}",
+          message: """Mode ${pipelineMode}: approval level 2 required.
+Approval level 1 granted by ${firstApprover}.
+Second approver must be different from the first approver.""",
+          ok: 'Approve Level 2',
+          submitter: remainingApprovers.join(','),
+          submitterParameter: 'SECOND_APPROVER'
+        )
+
+        String candidateApprover = extractApprover(secondApprovalRaw, 'SECOND_APPROVER')
+        if (!candidateApprover) {
+          echo "[PipelineGuard] Failed to read the second approver. Waiting for another approval input..."
+          continue
+        }
+
+        // Safety net:
+        // admin Jenkins can still respond to input step,
+        // so we validate again to ensure approver 2 != approver 1
+        if (candidateApprover == firstApprover) {
+          echo "[PipelineGuard] ${candidateApprover} already approved level 1, so they cannot approve level 2. Waiting for a different approver..."
+          continue
+        }
+
+        secondApprover = candidateApprover
+      }
+    }
+
+    echo "[PipelineGuard] Approval level 2 granted by: ${secondApprover}"
+
+    return [
+      firstApprover : firstApprover,
+      secondApprover: secondApprover
+    ]
+
+  } catch (org.jenkinsci.plugins.workflow.steps.FlowInterruptedException e) {
+    // Menangkap exception jika waktu habis (timeout) atau user menekan tombol Abort
+    echo "[PipelineGuard] Pipeline dibatalkan: Approval melewati batas waktu 1 jam atau ditolak secara manual."
+    
+    // Set status build ke ABORTED agar memicu block 'aborted' di Jenkinsfile
+    currentBuild.result = 'ABORTED'
+    error("Approval process aborted due to timeout or rejection.")
   }
-
-  echo "[PipelineGuard] Approval level 2 granted by: ${secondApprover}"
-
-  return [
-    firstApprover : firstApprover,
-    secondApprover: secondApprover
-  ]
 }
 
+// ... helper methods (parseCsv, joinCsv, extractApprover) tetap sama ...
 private List<String> parseCsv(String raw) {
   if (!raw?.trim()) {
     return []

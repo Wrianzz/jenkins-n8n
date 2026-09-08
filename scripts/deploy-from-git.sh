@@ -10,7 +10,7 @@ set -euo pipefail
 PROD_SSH_HOST="${PROD_SSH_HOST:?PROD_SSH_HOST is required}"
 PROD_SSH_USER="${PROD_SSH_USER:-}"
 PROD_SSH_PORT="${PROD_SSH_PORT:-22}"
-PROD_DEPLOY_TARGET="${PROD_DEPLOY_TARGET:-docker}"
+PROD_DEPLOY_TARGET="${PROD_DEPLOY_TARGET:-kubernetes}"
 PROD_CONTAINER="${PROD_CONTAINER:-n8n-prod-n8n-prod-1}"
 PROD_K8S_NAMESPACE="${PROD_K8S_NAMESPACE:-default}"
 PROD_K8S_POD_SELECTOR="${PROD_K8S_POD_SELECTOR:-app=n8n}"
@@ -21,6 +21,7 @@ PROD_PG_DATABASE="${PROD_PG_DATABASE:-n8n}"
 PROD_PG_USER="${PROD_PG_USER:-n8n}"
 PROD_PG_PASSWORD="${PROD_PG_PASSWORD:-}"
 SSH_KEY_FILE="${SSH_KEY_FILE:-}"
+PROD_KUBECONFIG="${PROD_KUBECONFIG:-/var/jenkins_home/n8n/kubeconfig-88.88}"
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 WF_DIR="${REPO_ROOT}/workflows"
@@ -41,11 +42,15 @@ remote_quote() {
 
 remote_psql() {
   local sql="$1"
-  local quoted_sql
-  quoted_sql="$(remote_quote "$sql")"
 
-  ssh "${PROD_SSH_OPTS[@]}" "$PROD_REMOTE" \
-    "PGPASSWORD=$(remote_quote "$PROD_PG_PASSWORD") psql -h $(remote_quote "$PROD_PG_HOST") -p $(remote_quote "$PROD_PG_PORT") -U $(remote_quote "$PROD_PG_USER") -d $(remote_quote "$PROD_PG_DATABASE") -tA -c $quoted_sql"
+  # Karena server PostgreSQL terpisah dan bisa ditembak langsung dari Jenkins,
+  # kita hilangkan SSH / wrapper pod. Jalankan langsung via psql lokal Jenkins.
+  PGPASSWORD="$PROD_PG_PASSWORD" psql \
+    -h "$PROD_PG_HOST" \
+    -p "$PROD_PG_PORT" \
+    -U "$PROD_PG_USER" \
+    -d "$PROD_PG_DATABASE" \
+    -tA -c "$sql"
 }
 
 prod_kubectl_exec_prefix() {
@@ -69,11 +74,13 @@ n8n_exec() {
         "docker exec '$PROD_CONTAINER' sh -lc $(remote_quote "$inner")"
       ;;
     kubernetes|kubectl)
-      ssh "${PROD_SSH_OPTS[@]}" "$PROD_REMOTE" \
-        "$(prod_kubectl_exec_prefix) sh -lc $(remote_quote "$inner")"
+      # Menggunakan pembungkus deployment/n8n-main sesuai pod testing kamu
+      kubectl --kubeconfig="$PROD_KUBECONFIG" exec deploy/n8n-main \
+        -n "$PROD_K8S_NAMESPACE" \
+        ${PROD_K8S_CONTAINER:+-c $PROD_K8S_CONTAINER} -- sh -lc "$inner"
       ;;
     *)
-      echo "[ERR] Unsupported PROD_DEPLOY_TARGET: $PROD_DEPLOY_TARGET (use docker or kubernetes)"
+      echo "[ERR] Unsupported PROD_DEPLOY_TARGET: $PROD_DEPLOY_TARGET"
       exit 1
       ;;
   esac
@@ -166,9 +173,11 @@ sync_and_move_to_prod_folder() {
     # 1. CEK FOLDER VIA DATABASE PROD (Bypass API n8n & WAF Cache)
     local check_query
     if [ "$current_parent_id" = "null" ]; then
-      check_query="SELECT id FROM folder WHERE name = '${folder_name}' AND \\\"projectId\\\" = '${PROD_PROJECT_ID}' AND \\\"parentFolderId\\\" IS NULL LIMIT 1;"
+      # PERBAIKAN: Gunakan \" biasa, jangan \\\"
+      check_query="SELECT id FROM folder WHERE name = '${folder_name}' AND \"projectId\" = '${PROD_PROJECT_ID}' AND \"parentFolderId\" IS NULL LIMIT 1;"
     else
-      check_query="SELECT id FROM folder WHERE name = '${folder_name}' AND \\\"projectId\\\" = '${PROD_PROJECT_ID}' AND \\\"parentFolderId\\\" = '${current_parent_id}' LIMIT 1;"
+      # PERBAIKAN: Gunakan \" biasa, jangan \\\"
+      check_query="SELECT id FROM folder WHERE name = '${folder_name}' AND \"projectId\" = '${PROD_PROJECT_ID}' AND \"parentFolderId\" = '${current_parent_id}' LIMIT 1;"
     fi
 
     local matched_id
@@ -437,46 +446,119 @@ validate_and_apply_credential_map_if_needed() {
   apply_production_credential_map "$workflow_file" "$map_file"
 }
 
+inject_workflow_settings() {
+  local target_file="$1"
+
+  echo "    [PROCESS] Applying conditional fallback settings for $(basename "$target_file")"
+  
+  # Perbaikan filter jq untuk mendukung struktur root berupa Object maupun Array
+  jq --arg ew "${PROD_ERROR_WORKFLOW_ID:-}" \
+     --arg enable_ew "${ENABLE_ERROR_HANDLER:-false}" \
+     --arg enable_timeout "${ENABLE_DEFAULT_TIMEOUT:-false}" \
+     --argjson default_timeout 30 '
+     
+     # Fungsi pembantu untuk memanipulasi skema objek settings n8n
+     def update_settings:
+       .settings = (.settings // {})
+       |
+       # 1. Logika Timeout
+       if .settings.executionTimeout == null and $enable_timeout == "true" then
+         .settings.executionTimeout = $default_timeout
+       else
+         .
+       end
+       |
+       # 2. Logika Error Workflow
+       if .settings.errorWorkflow == null and $enable_ew == "true" and ($ew | length > 0) then
+         .settings.errorWorkflow = $ew
+       else
+         .
+       end;
+
+     # Cek struktur root: jika array jalankan map update, jika object jalankan langsung
+     if type == "array" then
+       map(if type == "object" then update_settings else . end)
+     elif type == "object" then
+       update_settings
+     else
+       .
+     end
+     
+  ' "$target_file" > "${target_file}.tmp" && mv "${target_file}.tmp" "$target_file"
+}
+
 import_workflow_file_to_prod() {
   local local_file="$1"
   local workflow_id="$2"
-
-  local host_file="/tmp/${workflow_id}.json"
   local container_file="/tmp/${workflow_id}.json"
 
-  echo "    Copy workflow file to PROD host: $host_file"
-  scp "${PROD_SCP_OPTS[@]}" "$local_file" "$PROD_REMOTE:$host_file"
-
   echo "    Import workflow to PROD ${PROD_DEPLOY_TARGET}: $workflow_id"
+  
   case "$PROD_DEPLOY_TARGET" in
+    kubernetes|kubectl)
+      # Ambil nama pod n8n menggunakan kubeconfig lokal Jenkins
+      local pod_name
+      pod_name=$(kubectl --kubeconfig="$PROD_KUBECONFIG" get pod -n "$PROD_K8S_NAMESPACE" -l "$PROD_K8S_POD_SELECTOR" -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
+      
+      [[ -n "$pod_name" ]] || { echo "[ERR] Pod n8n tidak ditemukan dengan selector $PROD_K8S_POD_SELECTOR di namespace $PROD_K8S_NAMESPACE"; exit 1; }
+      
+      echo "    Copying file directly into pod $pod_name..."
+      kubectl --kubeconfig="$PROD_KUBECONFIG" cp "$local_file" "${PROD_K8S_NAMESPACE}/${pod_name}:${container_file}" ${PROD_K8S_CONTAINER:+-c $PROD_K8S_CONTAINER}
+      
+      # Eksekusi import di dalam pod
+      echo "    Executing n8n import inside pod..."
+      kubectl --kubeconfig="$PROD_KUBECONFIG" exec "$pod_name" -n "$PROD_K8S_NAMESPACE" ${PROD_K8S_CONTAINER:+-c $PROD_K8S_CONTAINER} -- \
+        n8n import:workflow --input "$container_file" --projectId "$PROD_PROJECT_ID"
+      ;;
+      
     docker)
+      local host_file="/tmp/${workflow_id}.json"
+      scp "${PROD_SCP_OPTS[@]}" "$local_file" "$PROD_REMOTE:$host_file"
       ssh "${PROD_SSH_OPTS[@]}" "$PROD_REMOTE" \
         "docker cp '$host_file' '$PROD_CONTAINER:$container_file' && \
          docker exec -u 0 '$PROD_CONTAINER' n8n import:workflow --input '$container_file' --projectId '$PROD_PROJECT_ID'"
-      ;;
-    kubernetes|kubectl)
-      local container_arg=""
-      if [[ -n "$PROD_K8S_CONTAINER" ]]; then
-        container_arg="-c $(remote_quote "$PROD_K8S_CONTAINER")"
-      fi
-      ssh "${PROD_SSH_OPTS[@]}" "$PROD_REMOTE" \
-        "pod=\$(kubectl -n $(remote_quote "$PROD_K8S_NAMESPACE") get pod -l $(remote_quote "$PROD_K8S_POD_SELECTOR") -o jsonpath='{.items[0].metadata.name}'); \
-         test -n \"\$pod\"; \
-         kubectl -n $(remote_quote "$PROD_K8S_NAMESPACE") cp '$host_file' \"\$pod:$container_file\" $container_arg; \
-         kubectl -n $(remote_quote "$PROD_K8S_NAMESPACE") exec \"\$pod\" $container_arg -- n8n import:workflow --input '$container_file' --projectId '$PROD_PROJECT_ID'"
-      ;;
-    *)
-      echo "[ERR] Unsupported PROD_DEPLOY_TARGET: $PROD_DEPLOY_TARGET (use docker or kubernetes)"
-      exit 1
+      ssh "${PROD_SSH_OPTS[@]}" "$PROD_REMOTE" "rm -f '$host_file'"
       ;;
   esac
 
-  echo "    Publish workflow: $workflow_id"
-  n8n_exec "n8n publish:workflow --id='$workflow_id'"
+  echo "    Publish workflow via REST API: $workflow_id"
+    
+  # 1. Force deactivate untuk memastikan state memori ter-reset (diabaikan jika sudah inactive)
+  curl -s -k -o /dev/null -X POST "${PROD_N8N_API_BASE_URL}/workflows/${workflow_id}/deactivate" \
+    -H "X-N8N-API-KEY: ${PROD_N8N_API_KEY}" \
+    -H "Accept: application/json"
+ 
+  # 2. Activate via REST API agar routing webhook terdaftar murni di active web server memory
+  local api_publish_status
+  api_publish_status=$(curl -s -k -o /dev/null -w "%{http_code}" -X POST "${PROD_N8N_API_BASE_URL}/workflows/${workflow_id}/activate" \
+    -H "X-N8N-API-KEY: ${PROD_N8N_API_KEY}" \
+    -H "Accept: application/json")
+ 
+  if [[ "$api_publish_status" -eq 200 ]]; then
+    echo "    [OK] Workflow $workflow_id published and webhooks registered successfully in memory."
+  else
+    echo "    [WARN] API Publish failed (HTTP Status: $api_publish_status). Falling back to CLI execution..."
+    case "$PROD_DEPLOY_TARGET" in
+      kubernetes|kubectl)
+        kubectl --kubeconfig="$PROD_KUBECONFIG" exec "$pod_name" -n "$PROD_K8S_NAMESPACE" ${PROD_K8S_CONTAINER:+-c $PROD_K8S_CONTAINER} -- \
+          n8n publish:workflow --id="$workflow_id"
+        ;;
+      docker)
+        ssh "${PROD_SSH_OPTS[@]}" "$PROD_REMOTE" "docker exec '$PROD_CONTAINER' n8n publish:workflow --id='$workflow_id'"
+        ;;
+    esac
+  fi
 
-  echo "    Cleanup temp files: $workflow_id"
-  ssh "${PROD_SSH_OPTS[@]}" "$PROD_REMOTE" "rm -f '$host_file'"
-  n8n_exec "rm -f '$container_file' || true"
+  # Cleanup file json sementara di dalam pod/container
+  echo "    Cleaning up container temporary file..."
+  case "$PROD_DEPLOY_TARGET" in
+    kubernetes|kubectl)
+      kubectl --kubeconfig="$PROD_KUBECONFIG" exec "$pod_name" -n "$PROD_K8S_NAMESPACE" ${PROD_K8S_CONTAINER:+-c $PROD_K8S_CONTAINER} -- rm -f "$container_file" || true
+      ;;
+    docker)
+      ssh "${PROD_SSH_OPTS[@]}" "$PROD_REMOTE" "docker exec '$PROD_CONTAINER' rm -f '$container_file'" || true
+      ;;
+  esac
 }
 
 MAP_FILE="${MAP_DIR}/$(basename "${WF_FILE%.json}").credentials.json"
@@ -534,6 +616,9 @@ if [[ -n "${SUB_WORKFLOW_IDS_CSV:-}" ]]; then
     fi
 
     echo "    Push selected sub-workflow: $sub_id"
+    
+    # --- PANGGIL FUNGSI INJECT UNTUK SUB-WORKFLOW DI SINI ---
+    inject_workflow_settings "$sub_file"    
     import_workflow_file_to_prod "$sub_file" "$sub_id"
     
     # [TAMBAHKAN DI SINI UNTUK SUB-WORKFLOW]
@@ -542,6 +627,10 @@ if [[ -n "${SUB_WORKFLOW_IDS_CSV:-}" ]]; then
 fi
 
 echo "    Push main workflow: $WORKFLOW_ID"
+
+# --- PANGGIL FUNGSI INJECT UNTUK MAIN WORKFLOW DI SINI ---
+inject_workflow_settings "$WF_FILE"
+
 import_workflow_file_to_prod "$WF_FILE" "$WORKFLOW_ID"
 
 # [TAMBAHKAN DI SINI UNTUK MAIN WORKFLOW]

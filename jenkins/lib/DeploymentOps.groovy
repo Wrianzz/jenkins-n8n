@@ -228,12 +228,9 @@ def normalizeAndFilterSubWorkflowIds(String selectedSubWorkflowIds = '') {
   return ids.join(',')
 }
 
-def deployFromRepoToProd(String sshCredId, String workflowId, String selectedSubWorkflowIds = '', String prodDeployTarget = 'docker') {
+def deployFromRepoToProd(String sshCredId, String workflowId, String selectedSubWorkflowIds = '') {
   String selectedSubWorkflowIdsArg = normalizeAndFilterSubWorkflowIds(selectedSubWorkflowIds)
 
-  echo "[DeploymentOps] Selected sub-workflow IDs to push: ${selectedSubWorkflowIdsArg ?: '(none)'}"
-
-  // Tambahkan string credential injection di sini
   withCredentials([
     sshUserPrivateKey(credentialsId: sshCredId, keyFileVariable: 'SSH_KEY_FILE'),
     string(credentialsId: env.PROD_N8N_API_KEY_CRED_ID, variable: 'PROD_N8N_API_KEY'),
@@ -244,12 +241,21 @@ def deployFromRepoToProd(String sshCredId, String workflowId, String selectedSub
 
       chmod +x scripts/deploy-from-git.sh scripts/promote-creds.sh
       
-      # Export variabelnya agar terbaca oleh curl di dalam bash script
+      # Export semua variabel agar terbaca langsung oleh script Bash lokal Jenkins
       export SSH_KEY_FILE
       export PROD_N8N_API_KEY
-      export PROD_DEPLOY_TARGET="${prodDeployTarget}"
       export PROD_PG_PASSWORD
-
+      export PROD_DEPLOY_TARGET="${env.PROD_DEPLOY_TARGET}"
+      export PROD_KUBECONFIG="${env.PROD_KUBECONFIG}"
+      export PROD_K8S_NAMESPACE="${env.PROD_K8S_NAMESPACE}"
+      export PROD_K8S_POD_SELECTOR="${env.PROD_K8S_POD_SELECTOR}"
+      export PROD_PG_HOST="${env.PROD_PG_HOST}"
+      export PROD_PG_PORT="${env.PROD_PG_PORT}"
+      export PROD_PG_USER="${env.PROD_PG_USER}"
+      export PROD_PG_DATABASE="${env.PROD_PG_DATABASE}"
+      export ENABLE_ERROR_HANDLER="${env.ENABLE_ERROR_HANDLER}"
+      export PROD_ERROR_WORKFLOW_ID="${env.PROD_ERROR_WORKFLOW_ID}"
+      export ENABLE_DEFAULT_TIMEOUT="${env.ENABLE_DEFAULT_TIMEOUT}"
       scripts/deploy-from-git.sh "${workflowId}" "${selectedSubWorkflowIdsArg}"
     """
   }

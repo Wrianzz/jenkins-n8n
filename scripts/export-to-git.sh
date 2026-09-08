@@ -35,11 +35,14 @@ remote_quote() {
 
 remote_psql() {
   local sql="$1"
-  local quoted_sql
-  quoted_sql="$(remote_quote "$sql")"
 
-  ssh "${SSH_OPTS[@]}" "$REMOTE_HOST" \
-    "PGPASSWORD=$(remote_quote "$DEV_PG_PASSWORD") psql -h $(remote_quote "$DEV_PG_HOST") -p $(remote_quote "$DEV_PG_PORT") -U $(remote_quote "$DEV_PG_USER") -d $(remote_quote "$DEV_PG_DATABASE") -tA -c $quoted_sql"
+  # Eksekusi langsung dari Jenkins menuju port database DEV
+  PGPASSWORD="$DEV_PG_PASSWORD" psql \
+    -h "$DEV_PG_HOST" \
+    -p "$DEV_PG_PORT" \
+    -U "$DEV_PG_USER" \
+    -d "$DEV_PG_DATABASE" \
+    -tA -c "$sql"
 }
 
 dev_kubectl_exec_prefix() {
@@ -85,13 +88,13 @@ n8n_exec "cat '/tmp/n8n-git/${WORKFLOW_ID}.json'" > "$LOCAL_FILE"
 
 echo "[2.5] Fetching Folder & Owner Metadata directly from DEV PostgreSQL"
 
-# 1. AMBIL NAMA TIM/OWNER DARI DATABASE DEV
+# 1. AMBIL NAMA TIM/OWNER DARI DATABASE DEV (Menggunakan CONCAT_WS agar bebas dari single/double quotes internal)
 TEAM_NAME=$(remote_psql "
-  SELECT trim(u.\\\"firstName\\\" || ' ' || COALESCE(u.\\\"lastName\\\", ''))
+  SELECT trim(concat_ws(' ', u.\"firstName\", u.\"lastName\"))
   FROM shared_workflow sw
-  JOIN project p ON sw.\\\"projectId\\\" = p.id
-  JOIN \\\"user\\\" u ON p.\\\"creatorId\\\" = u.id
-  WHERE sw.\\\"workflowId\\\" = '${WORKFLOW_ID}' AND sw.role = 'workflow:owner'
+  JOIN project p ON sw.\"projectId\" = p.id
+  JOIN \"user\" u ON p.\"creatorId\" = u.id
+  WHERE sw.\"workflowId\" = '${WORKFLOW_ID}' AND sw.role = 'workflow:owner'
   LIMIT 1;
 " | tr -d '\r' | xargs)
 
@@ -99,32 +102,32 @@ TEAM_NAME=$(remote_psql "
 TEAM_NAME=${TEAM_NAME:-"Unassigned Team"}
 
 # 2. AMBIL HIRARKI FOLDER ASLI DARI DATABASE DEV
-FOLDER_PATH=$(remote_psql "$(cat <<SQL
+# Pastikan tidak ada backslash misterius yang ikut ter-escape ganda di heredoc
+FOLDER_PATH=$(remote_psql "
 WITH RECURSIVE folder_hierarchy AS (
     SELECT 
         w.id AS workflow_id,
         f.id AS folder_id,
         f.name AS folder_name,
-        f."parentFolderId" AS parent_id,
+        f.\"parentFolderId\" AS parent_id,
         1 AS depth,
         ARRAY[f.name::text] AS path_array
     FROM workflow_entity w
-    JOIN folder f ON w."parentFolderId" = f.id
+    JOIN folder f ON w.\"parentFolderId\" = f.id
     WHERE w.id = '${WORKFLOW_ID}'
     UNION ALL
     SELECT 
         fh.workflow_id,
         f.id AS folder_id,
         f.name AS folder_name,
-        f."parentFolderId" AS parent_id,
+        f.\"parentFolderId\" AS parent_id,
         fh.depth + 1,
         f.name::text || fh.path_array
     FROM folder_hierarchy fh
     JOIN folder f ON fh.parent_id = f.id
 )
 SELECT array_to_string(path_array, '/') FROM folder_hierarchy ORDER BY depth DESC LIMIT 1;
-SQL
-)" | tr -d '\r' | xargs)
+" | tr -d '\r' | xargs)
 
 # 3. GABUNGKAN NAMA TIM SEBAGAI ROOT FOLDER
 FINAL_PATH=""
