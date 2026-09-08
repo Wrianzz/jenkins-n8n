@@ -56,10 +56,11 @@ for CID in $CRED_IDS; do
   [[ -z "${CID:-}" ]] && continue
   echo "[DEV] Exporting..."
   ssh "${DEV_SSH_OPTS[@]}" "$DEV_REMOTE" \
-    "docker exec '$DEV_CONTAINER' n8n export:credentials --id '$CID' --decrypted --output /tmp/cred_${CID}.json"
+    "docker exec '$DEV_CONTAINER' sh -c 'mkdir -p /tmp/${RUN_ID} && n8n export:credentials --id \"$CID\" --decrypted --output /tmp/${RUN_ID}/cred_${CID}.json'"
+    
   echo "[DEV] Moving..."
   ssh "${DEV_SSH_OPTS[@]}" "$DEV_REMOTE" \
-    "docker exec '$DEV_CONTAINER' cat /tmp/cred_${CID}.json" > "${CREDS_DIR}/cred_${CID}.json"
+    "docker exec '$DEV_CONTAINER' cat /tmp/${RUN_ID}/cred_${CID}.json" > "${CREDS_DIR}/cred_${CID}.json"
   count=$((count+1))
 done
 [[ "$count" -gt 0 ]] || { echo "[ERR] No credential IDs provided after normalization."; exit 1; }
