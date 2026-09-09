@@ -108,7 +108,15 @@ pipeline {
       }
       steps {
         script {
-          DeploymentOps.exportWorkflowFromDev(env.SSH_CRED_ID, env.WORKFLOW_ID, '', params.DEV_DEPLOY_TARGET)
+          try {
+            DeploymentOps.exportWorkflowFromDev(env.SSH_CRED_ID, env.WORKFLOW_ID, '', params.DEV_DEPLOY_TARGET)
+          } catch (e) {
+            if (e?.message?.contains('script returned exit code 42')) {
+              currentBuild.result = 'ABORTED'
+              error('[Pipeline] Workflow configuration/input error detected during DEV export.')
+            }
+            throw e
+          }
         }
       }
     }
@@ -119,15 +127,23 @@ pipeline {
       }
       steps {
         script {
-          env.SELECTED_SUBWORKFLOW_IDS = DeploymentOps.discoverAndSelectSubWorkflows(env.SSH_CRED_ID, env.WORKFLOW_ID, params.DEV_DEPLOY_TARGET) ?: ''
+          try {
+            env.SELECTED_SUBWORKFLOW_IDS = DeploymentOps.discoverAndSelectSubWorkflows(env.SSH_CRED_ID, env.WORKFLOW_ID, params.DEV_DEPLOY_TARGET) ?: ''
 
-          if (env.SELECTED_SUBWORKFLOW_IDS?.trim()) {
-            DeploymentOps.exportWorkflowFromDev(
-              env.SSH_CRED_ID,
-              env.WORKFLOW_ID,
-              env.SELECTED_SUBWORKFLOW_IDS,
-              params.DEV_DEPLOY_TARGET
-            )
+            if (env.SELECTED_SUBWORKFLOW_IDS?.trim()) {
+              DeploymentOps.exportWorkflowFromDev(
+                env.SSH_CRED_ID,
+                env.WORKFLOW_ID,
+                env.SELECTED_SUBWORKFLOW_IDS,
+                params.DEV_DEPLOY_TARGET
+              )
+            }
+          } catch (e) {
+            if (e?.message?.contains('script returned exit code 42')) {
+              currentBuild.result = 'ABORTED'
+              error('[Pipeline] Workflow/sub-workflow configuration error detected during validation.')
+            }
+            throw e
           }
         }
       }
@@ -158,20 +174,28 @@ pipeline {
       }
       steps {
         script {
-          if (!env.SELECTED_SUBWORKFLOW_IDS?.trim()) {
-            env.SELECTED_SUBWORKFLOW_IDS = DeploymentOps.discoverSubWorkflowIdsFromRemoteWorkflowBranch(
+          try {
+            if (!env.SELECTED_SUBWORKFLOW_IDS?.trim()) {
+              env.SELECTED_SUBWORKFLOW_IDS = DeploymentOps.discoverSubWorkflowIdsFromRemoteWorkflowBranch(
+                env.GIT_CRED_ID,
+                env.WORKFLOW_ID
+              ) ?: ''
+
+              echo "Auto-discovered sub-workflow IDs for validation/deploy: ${env.SELECTED_SUBWORKFLOW_IDS ?: '(none)'}"
+            }
+
+            DeploymentOps.validateWorkflowCredentialsOnly(
               env.GIT_CRED_ID,
-              env.WORKFLOW_ID
-            ) ?: ''
-
-            echo "Auto-discovered sub-workflow IDs for validation/deploy: ${env.SELECTED_SUBWORKFLOW_IDS ?: '(none)'}"
+              env.WORKFLOW_ID,
+              env.SELECTED_SUBWORKFLOW_IDS ?: ''
+            )
+          } catch (e) {
+            if (e?.message?.contains('script returned exit code 42')) {
+              currentBuild.result = 'ABORTED'
+              error('[Pipeline] Workflow/credential configuration validation failed.')
+            }
+            throw e
           }
-
-          DeploymentOps.validateWorkflowCredentialsOnly(
-            env.GIT_CRED_ID,
-            env.WORKFLOW_ID,
-            env.SELECTED_SUBWORKFLOW_IDS ?: ''
-          )
         }
       }
     }
