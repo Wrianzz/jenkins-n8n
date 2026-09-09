@@ -6,6 +6,9 @@ WORKFLOW_FILE="${2:-workflows/${WORKFLOW_ID}.json}"
 SUB_WORKFLOW_IDS_CSV="${3:-}"
 MAP_DIR="workflows/credential-maps"
 
+# Exit code used for errors caused by workflow/user configuration rather than infrastructure.
+HUMAN_ERROR_EXIT_CODE=42
+
 workflow_has_credentials() {
   local workflow_file="$1"
 
@@ -35,8 +38,8 @@ validate_credential_map_schema() {
   local map_path="$1"
 
   [[ -f "$map_path" ]] || {
-    echo "[ERR] Credential map file not found: $map_path"
-    exit 1
+    echo "[HUMAN_ERROR] Credential map file not found: $map_path"
+    exit "$HUMAN_ERROR_EXIT_CODE"
   }
 
   echo "[DEBUG] Credential map file: $map_path"
@@ -65,13 +68,13 @@ validate_credential_map_schema() {
       )
     ))
   ' "$map_path" >/dev/null; then
-    echo "[ERR] Invalid credential map schema: $map_path"
+    echo "[HUMAN_ERROR] Invalid credential map schema: $map_path"
     echo "[ERR] Expected format:"
     echo '{"entries":[{"nodeName":"...","credentialName":"...","credentialId":"..."}]}'
     echo ""
     echo "[NOTE] nodeId optional."
     echo "[NOTE] credentialType optional karena akan otomatis diambil dari workflow JSON kalau hanya ada 1 credential key."
-    exit 1
+    exit "$HUMAN_ERROR_EXIT_CODE"
   fi
 
   echo "[OK] Credential map schema valid: $(basename "$map_path")"
@@ -210,20 +213,14 @@ validate_workflow_nodes_against_map() {
           | "  - name=\"\(.name // "")\" | id=\"\(.id // "")\" | type=\"\(.type // "")\" | credentials=[\((.credentials // {} | keys) | join(", "))]"
         ),
         "",
-        "[FAIL] Found \($problems | length) validation problem(s):",
+        "[HUMAN_ERROR] Found \($problems | length) validation problem(s):",
         (
           $problems[]
           | if .type == "missing_node" then
               "  [MISSING NODE]\n" +
               "    map.nodeName            : \"\(.entry.nodeName // "")\"\n" +
               "    normalized map.nodeName : \"\(.normalizedNodeName)\"\n" +
-              "    candidate similar nodes : \(
-                if (.candidates | length) > 0 then
-                  (.candidates | join(" | "))
-                else
-                  "(tidak ada kandidat mirip)"
-                end
-              )"
+              "    candidate similar nodes : \(if (.candidates | length) > 0 then (.candidates | join(" | ")) else "(tidak ada kandidat mirip)" end)"
             elif .type == "missing_credentials_object" then
               "  [NODE HAS NO CREDENTIAL]\n" +
               "    map.nodeName        : \"\(.entry.nodeName // "")\"\n" +
@@ -259,21 +256,15 @@ validate_workflow_nodes_against_map() {
           | . as $entry
           | (node_for_entry($entry; $nodes)) as $node
           | (credential_keys($node)) as $keys
-          | (
-              if (($entry.credentialType? // "") | length) > 0 then
-                $entry.credentialType
-              else
-                $keys[0]
-              end
-            ) as $inferred_type
+          | (if (($entry.credentialType? // "") | length) > 0 then $entry.credentialType else $keys[0] end) as $inferred_type
           | "  - nodeName=\"\($entry.nodeName)\" | inferredCredentialType=\"\($inferred_type)\" | newCredentialName=\"\($entry.credentialName)\" | newCredentialId=\"\($entry.credentialId)\""
         ),
         "[OK] Workflow nodes/credentials match map: \($workflow_file | split("/") | last)"
       end
   ' "$workflow_file" 2>&1)"; then
     echo "$validation_output"
-    echo "[ERR] Workflow and map validation failed for: $workflow_file"
-    exit 1
+    echo "[HUMAN_ERROR] Workflow and map validation failed for: $workflow_file"
+    exit "$HUMAN_ERROR_EXIT_CODE"
   fi
 
   echo "$validation_output"
@@ -283,8 +274,8 @@ validate_one_workflow() {
   local workflow_file="$1"
 
   [[ -f "$workflow_file" ]] || {
-    echo "[ERR] Workflow file not found in checked-out branch: $workflow_file"
-    exit 1
+    echo "[HUMAN_ERROR] Workflow file not found in checked-out branch: $workflow_file"
+    exit "$HUMAN_ERROR_EXIT_CODE"
   }
 
   local workflow_base
