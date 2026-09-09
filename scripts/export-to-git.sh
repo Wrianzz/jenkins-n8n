@@ -18,6 +18,11 @@ DEV_PG_DATABASE="${DEV_PG_DATABASE:-n8n}"
 DEV_PG_USER="${DEV_PG_USER:-n8n}"
 DEV_PG_PASSWORD="${DEV_PG_PASSWORD:-}"
 SSH_KEY_FILE="${SSH_KEY_FILE:-}"
+DEV_N8N_API_BASE_URL="${DEV_N8N_API_BASE_URL:?DEV_N8N_API_BASE_URL is required}"
+DEV_N8N_API_KEY="${DEV_N8N_API_KEY:?DEV_N8N_API_KEY is required}"
+
+# Exit code reserved for workflow/user configuration errors.
+HUMAN_ERROR_EXIT_CODE=42
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 OUT_DIR="${REPO_ROOT}/workflows"
@@ -37,7 +42,6 @@ remote_quote() {
 remote_psql() {
   local sql="$1"
 
-  # Eksekusi langsung dari Jenkins menuju port database DEV
   PGPASSWORD="$DEV_PG_PASSWORD" psql \
     -h "$DEV_PG_HOST" \
     -p "$DEV_PG_PORT" \
@@ -77,19 +81,54 @@ n8n_exec() {
   esac
 }
 
+# Resolve workflow IDs through the DEV n8n API before touching SSH/docker/kubectl.
+# 404 means the supplied workflowId does not exist (human/config error).
+# Authentication/server/network failures remain normal exit 1 (system failure).
+validate_workflow_id_exists() {
+  local workflow_id="$1"
+  local response_file http_code
+  response_file="$(mktemp)"
+  trap 'rm -f "$response_file"' RETURN
+
+  http_code="$(curl --silent --show-error --output "$response_file" --write-out '%{http_code}' \
+    --connect-timeout 10 --max-time 30 \
+    -H "X-N8N-API-KEY: ${DEV_N8N_API_KEY}" \
+    "${DEV_N8N_API_BASE_URL%/}/workflows/${workflow_id}")"
+
+  case "$http_code" in
+    200)
+      echo "[INFO] DEV workflow ID validated: ${workflow_id}"
+      ;;
+    400|404)
+      echo "[HUMAN_ERROR] Workflow ID not found on DEV n8n: ${workflow_id}"
+      exit "$HUMAN_ERROR_EXIT_CODE"
+      ;;
+    401|403)
+      echo "[ERR] DEV n8n API authentication/authorization failed while validating workflow ID ${workflow_id} (HTTP ${http_code})"
+      cat "$response_file" >&2 || true
+      exit 1
+      ;;
+    *)
+      echo "[ERR] DEV n8n API failed while validating workflow ID ${workflow_id} (HTTP ${http_code})"
+      cat "$response_file" >&2 || true
+      exit 1
+      ;;
+  esac
+}
+
 mkdir -p "$OUT_DIR"
 rm -rf "$TMP_DIR"
 mkdir -p "$TMP_DIR"
+
+validate_workflow_id_exists "$WORKFLOW_ID"
 
 echo "[1] Export main workflow on DEV server"
 n8n_exec "rm -rf '${REMOTE_TMP_DIR}' && mkdir -p '${REMOTE_TMP_DIR}' && n8n export:workflow --id \"$WORKFLOW_ID\" --output '${REMOTE_TMP_DIR}/${WORKFLOW_ID}.json' --pretty"
 
 echo "[2] Copy exported file from DEV server"
 n8n_exec "cat '${REMOTE_TMP_DIR}/${WORKFLOW_ID}.json'" > "$LOCAL_FILE"
-
 echo "[2.5] Fetching Folder & Owner Metadata directly from DEV PostgreSQL"
 
-# 1. AMBIL NAMA TIM/OWNER DARI DATABASE DEV (Menggunakan CONCAT_WS agar bebas dari single/double quotes internal)
 TEAM_NAME=$(remote_psql "
   SELECT trim(concat_ws(' ', u.\"firstName\", u.\"lastName\"))
   FROM shared_workflow sw
@@ -99,14 +138,11 @@ TEAM_NAME=$(remote_psql "
   LIMIT 1;
 " | tr -d '\r' | xargs)
 
-# Fallback jika workflow tidak memiliki owner jelas
 TEAM_NAME=${TEAM_NAME:-"Unassigned Team"}
 
-# 2. AMBIL HIRARKI FOLDER ASLI DARI DATABASE DEV
-# Pastikan tidak ada backslash misterius yang ikut ter-escape ganda di heredoc
 FOLDER_PATH=$(remote_psql "
 WITH RECURSIVE folder_hierarchy AS (
-    SELECT 
+    SELECT
         w.id AS workflow_id,
         f.id AS folder_id,
         f.name AS folder_name,
@@ -117,7 +153,7 @@ WITH RECURSIVE folder_hierarchy AS (
     JOIN folder f ON w.\"parentFolderId\" = f.id
     WHERE w.id = '${WORKFLOW_ID}'
     UNION ALL
-    SELECT 
+    SELECT
         fh.workflow_id,
         f.id AS folder_id,
         f.name AS folder_name,
@@ -130,16 +166,13 @@ WITH RECURSIVE folder_hierarchy AS (
 SELECT array_to_string(path_array, '/') FROM folder_hierarchy ORDER BY depth DESC LIMIT 1;
 " | tr -d '\r' | xargs)
 
-# 3. GABUNGKAN NAMA TIM SEBAGAI ROOT FOLDER
 FINAL_PATH=""
 if [ -n "$FOLDER_PATH" ]; then
   FINAL_PATH="${TEAM_NAME}/${FOLDER_PATH}"
 else
-  # Jika di DEV dia ada di luar folder, di PROD dia akan masuk ke dalam folder Tim-nya
   FINAL_PATH="${TEAM_NAME}"
 fi
 
-# Simpan hasil string path final ke sidecar file metadata (.meta)
 mkdir -p "${OUT_DIR}/metadata"
 echo "$FINAL_PATH" > "${OUT_DIR}/metadata/${WORKFLOW_ID}.meta"
 
@@ -162,6 +195,7 @@ if [[ -n "$SUB_WORKFLOW_IDS_CSV" ]]; then
     sub_id="$(echo "$sub_id_raw" | xargs)"
     [[ -n "$sub_id" ]] || continue
 
+    validate_workflow_id_exists "$sub_id"
     n8n_exec "n8n export:workflow --id \"$sub_id\" --output '${REMOTE_TMP_DIR}/${sub_id}.json' --pretty"
     n8n_exec "cat '${REMOTE_TMP_DIR}/${sub_id}.json'" > "${TMP_DIR}/${sub_id}.json"
     jq -S '.' "${TMP_DIR}/${sub_id}.json" > "${OUT_DIR}/${sub_id}.json"
