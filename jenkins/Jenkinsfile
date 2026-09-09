@@ -175,6 +175,35 @@ pipeline {
       steps {
         script {
           try {
+            // A missing workflow branch means the requested workflow has not been
+            // pushed/selected correctly. Git exit code 2 is the expected
+            // "ref not found" result; auth/network failures return other codes
+            // and therefore remain FAILURE.
+            withCredentials([usernamePassword(
+              credentialsId: env.GIT_CRED_ID,
+              usernameVariable: 'GH_USER',
+              passwordVariable: 'GH_PASS'
+            )]) {
+              int branchStatus = sh(
+                script: '''
+                  set +e
+                  git ls-remote --exit-code --heads "http://${GH_USER}:${GH_PASS}@atlassian.satnusa.com:7990/scm/dvo/n8n-cicd-workflows.git" "workflow/${WORKFLOW_ID}" >/dev/null 2>&1
+                  status=$?
+                  exit $status
+                ''',
+                returnStatus: true
+              )
+
+              if (branchStatus == 2) {
+                currentBuild.result = 'ABORTED'
+                error("[Pipeline][HUMAN_ERROR] Workflow branch not found: workflow/${env.WORKFLOW_ID}. Check the workflowId or push the workflow first.")
+              }
+
+              if (branchStatus != 0) {
+                error("[Pipeline] Failed to verify workflow branch workflow/${env.WORKFLOW_ID}; git returned ${branchStatus}.")
+              }
+            }
+
             if (!env.SELECTED_SUBWORKFLOW_IDS?.trim()) {
               env.SELECTED_SUBWORKFLOW_IDS = DeploymentOps.discoverSubWorkflowIdsFromRemoteWorkflowBranch(
                 env.GIT_CRED_ID,
