@@ -16,21 +16,18 @@ pipeline {
       choices: ['DEV_TO_REPO', 'REPO_TO_PROD', 'DEV_TO_PROD'],
       description: 'Pilih mode pipeline: DEV_TO_REPO | REPO_TO_PROD | DEV_TO_PROD'
     )
-    choice(
-      name: 'DEV_DEPLOY_TARGET',
-      choices: ['docker', 'kubernetes'],
-      description: 'Runtime n8n DEV untuk export workflow: docker atau kubernetes/kubectl'
-    )
-    choice(
-      name: 'PROD_DEPLOY_TARGET',
-      choices: ['docker', 'kubernetes'],
-      description: 'Runtime n8n PROD untuk import/publish workflow: docker atau kubernetes/kubectl'
-    )
   }
 
   environment {
     WORKFLOW_ID = 'vZKma9MU6KhxsPNI'
 
+    PROD_DEPLOY_TARGET = 'docker'
+    DEV_DEPLOY_TARGET = 'docker'
+
+    ENABLE_ERROR_HANDLER = 'true'
+    PROD_ERROR_WORKFLOW_ID = '8BkbvyZ93Pb68cT'
+    ENABLE_DEFAULT_TIMEOUT = 'true'
+    
     SSH_CRED_ID  = 'n8n-cross-server-ssh'
     DEV_SSH_HOST = '192.168.88.20'
     DEV_SSH_USER = 'jenkins'
@@ -40,35 +37,41 @@ pipeline {
     PROD_SSH_USER = 'jenkins'
     PROD_SSH_PORT = '22'
     PROD_N8N_API_BASE_URL = 'https://n8nprod.satnusa.com/api/v1'
+    DEV_N8N_API_BASE_URL = 'https://n8ndev.satnusa.com/api/v1'
     PROD_N8N_API_KEY_CRED_ID = 'n8n-production-api-key'
-
-    DEV_CONTAINER = 'n8n-dev'
-    DEV_K8S_NAMESPACE = 'n8n-dev'
-    DEV_K8S_POD_SELECTOR = 'app=n8n'
-    DEV_K8S_CONTAINER = 'n8n'
+    DEV_N8N_API_KEY_CRED_ID = 'n8n-development-api-key'
 
     DEV_PG_HOST = '192.168.88.20'
-    DEV_PG_PORT = '5432'
+    DEV_PG_PORT = '65432'
     DEV_PG_DATABASE = 'n8n'
     DEV_PG_USER = 'n8n'
-    DEV_PG_PASSWORD_CRED_ID = 'n8n-dev-postgres-password'
-
-    PROD_CONTAINER = 'n8n-prod'
-    PROD_K8S_NAMESPACE = 'n8n-prod'
-    PROD_K8S_POD_SELECTOR = 'app=n8n'
-    PROD_K8S_CONTAINER = 'n8n'
-
+    DEV_PG_PASSWORD_CRED_ID = 'n8n-postgres-password'
+    DEV_CONTAINER    = 'n8n-dev'
+    
+    PROD_KUBECONFIG = '/var/jenkins_home/n8n/kubeconfig-88.88'
+    PROD_K8S_NAMESPACE = 'n8n-testing'
+    PROD_K8S_POD_SELECTOR = 'app=n8n-main'
     PROD_PG_HOST = '192.168.88.80'
-    PROD_PG_PORT = '5432'
+    PROD_PG_PORT = '65432'
     PROD_PG_DATABASE = 'n8n'
     PROD_PG_USER = 'n8n'
-    PROD_PG_PASSWORD_CRED_ID = 'n8n-prod-postgres-password'
+    PROD_PG_PASSWORD_CRED_ID = 'n8n-postgres-password'
+    PROD_CONTAINER    = 'n8n-prod'
 
     REPO_HTTP = 'http://atlassian.satnusa.com:7990/scm/dvo/n8n-cicd-workflows.git'
     GIT_CRED_ID = 'bitbucket-satnusa-account'
 
     APPROVER = 'o.midiyanto, fathur.wiriansyah, fathur.morax'
-    APPROVER_EMAIL = 'o.midiyanto@satnusa.com, arthurwiriansyah@gmail.com, arthurwiriansyah13@gmail.com'
+    APPROVER_EMAIL = 'o.midiyanto@satnusa.com, fathur.wiriansyah@satnusa.com, arthurwiriansyah13@gmail.com'
+    
+    iTopTicketEnabled = 'true'
+    iTopURL = 'https://servicedesk.satnusa.com'
+    iTopCredentialId = 'itop-servicedesk-n8nautomation'
+    iTopService = 'DEVSECOPS INCIDENTS'
+    iTopServiceSubcategory = 'CI/CD Pipeline Failed'
+    iTopUrgency = 'HIGH'
+    iTopCallerUsername = 'n8nautomation'
+    iTopAgentUsernames = 'o.midiyanto,fathur.wiriansyah'
   }
 
   stages {
@@ -109,7 +112,7 @@ pipeline {
       steps {
         script {
           try {
-            DeploymentOps.exportWorkflowFromDev(env.SSH_CRED_ID, env.WORKFLOW_ID, '', params.DEV_DEPLOY_TARGET)
+            DeploymentOps.exportWorkflowFromDev(env.SSH_CRED_ID, env.WORKFLOW_ID)
           } catch (e) {
             if (e?.message?.contains('script returned exit code 42')) {
               currentBuild.result = 'ABORTED'
@@ -128,14 +131,13 @@ pipeline {
       steps {
         script {
           try {
-            env.SELECTED_SUBWORKFLOW_IDS = DeploymentOps.discoverAndSelectSubWorkflows(env.SSH_CRED_ID, env.WORKFLOW_ID, params.DEV_DEPLOY_TARGET) ?: ''
+            env.SELECTED_SUBWORKFLOW_IDS = DeploymentOps.discoverAndSelectSubWorkflows(env.SSH_CRED_ID, env.WORKFLOW_ID) ?: ''
 
             if (env.SELECTED_SUBWORKFLOW_IDS?.trim()) {
               DeploymentOps.exportWorkflowFromDev(
                 env.SSH_CRED_ID,
                 env.WORKFLOW_ID,
-                env.SELECTED_SUBWORKFLOW_IDS,
-                params.DEV_DEPLOY_TARGET
+                env.SELECTED_SUBWORKFLOW_IDS
               )
             }
           } catch (e) {
@@ -175,35 +177,6 @@ pipeline {
       steps {
         script {
           try {
-            // A missing workflow branch means the requested workflow has not been
-            // pushed/selected correctly. Git exit code 2 is the expected
-            // "ref not found" result; auth/network failures return other codes
-            // and therefore remain FAILURE.
-            withCredentials([usernamePassword(
-              credentialsId: env.GIT_CRED_ID,
-              usernameVariable: 'GH_USER',
-              passwordVariable: 'GH_PASS'
-            )]) {
-              int branchStatus = sh(
-                script: '''
-                  set +e
-                  git ls-remote --exit-code --heads "http://${GH_USER}:${GH_PASS}@atlassian.satnusa.com:7990/scm/dvo/n8n-cicd-workflows.git" "workflow/${WORKFLOW_ID}" >/dev/null 2>&1
-                  status=$?
-                  exit $status
-                ''',
-                returnStatus: true
-              )
-
-              if (branchStatus == 2) {
-                currentBuild.result = 'ABORTED'
-                error("[Pipeline][HUMAN_ERROR] Workflow branch not found: workflow/${env.WORKFLOW_ID}. Check the workflowId or push the workflow first.")
-              }
-
-              if (branchStatus != 0) {
-                error("[Pipeline] Failed to verify workflow branch workflow/${env.WORKFLOW_ID}; git returned ${branchStatus}.")
-              }
-            }
-
             if (!env.SELECTED_SUBWORKFLOW_IDS?.trim()) {
               env.SELECTED_SUBWORKFLOW_IDS = DeploymentOps.discoverSubWorkflowIdsFromRemoteWorkflowBranch(
                 env.GIT_CRED_ID,
@@ -222,6 +195,10 @@ pipeline {
             if (e?.message?.contains('script returned exit code 42')) {
               currentBuild.result = 'ABORTED'
               error('[Pipeline] Workflow/credential configuration validation failed.')
+            }
+            if (e?.message?.contains('Branch workflow/') && e?.message?.contains('not found on remote')) {
+              currentBuild.result = 'ABORTED'
+              error("[Pipeline][HUMAN_ERROR] Workflow branch not found: workflow/${env.WORKFLOW_ID}. Check the workflowId or push the workflow first.")
             }
             throw e
           }
@@ -278,8 +255,7 @@ pipeline {
           DeploymentOps.deployFromRepoToProd(
             env.SSH_CRED_ID,
             env.WORKFLOW_ID,
-            env.SELECTED_SUBWORKFLOW_IDS ?: '',
-            params.PROD_DEPLOY_TARGET
+            env.SELECTED_SUBWORKFLOW_IDS ?: ''
           )
         }
       }
@@ -310,6 +286,7 @@ pipeline {
             secondApprover: env.SECOND_APPROVER
           ]
         )
+        createiTopTicket()
       }
     }
 
