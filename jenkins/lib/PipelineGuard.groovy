@@ -3,11 +3,13 @@ def requestTwoApprovals(String pipelineMode, String workflowId, String submitter
   List<String> approverEmails = parseCsv(submitterEmailCsv)
 
   if (approvers.size() < 2) {
-    error("[PipelineGuard] There must be at least 2 unique approvers.")
+    currentBuild.result = 'ABORTED'
+    error("[PipelineGuard][HUMAN_ERROR] There must be at least 2 unique approvers.")
   }
 
   if (!approverEmails.isEmpty() && approverEmails.size() != approvers.size()) {
-    error("[PipelineGuard] APPROVER and APPROVER_EMAIL must be the same, and their order must be aligned.")
+    currentBuild.result = 'ABORTED'
+    error("[PipelineGuard][HUMAN_ERROR] APPROVER and APPROVER_EMAIL must be the same, and their order must be aligned.")
   }
 
   Map<String, String> approverEmailMap = [:]
@@ -16,20 +18,14 @@ def requestTwoApprovals(String pipelineMode, String workflowId, String submitter
   }
 
   try {
-    // =========================
-    // APPROVAL LEVEL 1
-    // =========================
     sendEmailTemplate(
       MAILMODE: 'APPROVAL_REQUIRED',
       RECIPIENT_EMAIL: joinCsv(approverEmails),
       RECIPIENT_NAME: approvers.join(', '),
-      EXTRA_DATA: [
-        approvalLevel: 1
-      ]
+      EXTRA_DATA: [approvalLevel: 1]
     )
 
     def firstApprovalRaw
-    // Timeout 1 Jam untuk Approval 1
     timeout(time: 1, unit: 'HOURS') {
       firstApprovalRaw = input(
         id: "approval-l1-${env.BUILD_NUMBER}",
@@ -42,17 +38,16 @@ def requestTwoApprovals(String pipelineMode, String workflowId, String submitter
 
     String firstApprover = extractApprover(firstApprovalRaw, 'FIRST_APPROVER')
     if (!firstApprover) {
-      error("[PipelineGuard] Failed to read the first approver from the input step.")
+      currentBuild.result = 'ABORTED'
+      error("[PipelineGuard][HUMAN_ERROR] Failed to read the first approver from the input step.")
     }
 
     echo "[PipelineGuard] Approval level 1 granted by: ${firstApprover}"
 
-    // =========================
-    // APPROVAL LEVEL 2
-    // =========================
     List<String> remainingApprovers = approvers.findAll { it != firstApprover }
     if (remainingApprovers.isEmpty()) {
-      error("[PipelineGuard] There are no remaining approvers for approval level 2.")
+      currentBuild.result = 'ABORTED'
+      error("[PipelineGuard][HUMAN_ERROR] There are no remaining approvers for approval level 2.")
     }
 
     List<String> remainingEmails = []
@@ -77,14 +72,13 @@ def requestTwoApprovals(String pipelineMode, String workflowId, String submitter
     int secondApprovalAttempt = 0
     int maxSecondApprovalAttempts = 10
 
-    // Timeout 1 Jam untuk Keseluruhan Proses Approval 2
-    // (Timer ter-reset dan mulai dari 0 lagi setelah masuk blok ini)
     timeout(time: 1, unit: 'HOURS') {
       while (!secondApprover) {
         secondApprovalAttempt++
 
         if (secondApprovalAttempt > maxSecondApprovalAttempts) {
-          error("[PipelineGuard] Second approval failed after ${maxSecondApprovalAttempts} invalid attempts.")
+          currentBuild.result = 'ABORTED'
+          error("[PipelineGuard][HUMAN_ERROR] Second approval failed after ${maxSecondApprovalAttempts} invalid attempts.")
         }
 
         def secondApprovalRaw = input(
@@ -103,9 +97,6 @@ Second approver must be different from the first approver.""",
           continue
         }
 
-        // Safety net:
-        // admin Jenkins can still respond to input step,
-        // so we validate again to ensure approver 2 != approver 1
         if (candidateApprover == firstApprover) {
           echo "[PipelineGuard] ${candidateApprover} already approved level 1, so they cannot approve level 2. Waiting for a different approver..."
           continue
@@ -123,16 +114,12 @@ Second approver must be different from the first approver.""",
     ]
 
   } catch (org.jenkinsci.plugins.workflow.steps.FlowInterruptedException e) {
-    // Menangkap exception jika waktu habis (timeout) atau user menekan tombol Abort
     echo "[PipelineGuard] Pipeline dibatalkan: Approval melewati batas waktu 1 jam atau ditolak secara manual."
-    
-    // Set status build ke ABORTED agar memicu block 'aborted' di Jenkinsfile
     currentBuild.result = 'ABORTED'
     error("Approval process aborted due to timeout or rejection.")
   }
 }
 
-// ... helper methods (parseCsv, joinCsv, extractApprover) tetap sama ...
 private List<String> parseCsv(String raw) {
   if (!raw?.trim()) {
     return []
