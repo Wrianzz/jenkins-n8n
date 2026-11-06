@@ -487,79 +487,146 @@ inject_workflow_settings() {
   ' "$target_file" > "${target_file}.tmp" && mv "${target_file}.tmp" "$target_file"
 }
 
-import_workflow_file_to_prod() {
+prod_workflow_api() {
+  local method="$1" path="$2" response_file="$3" payload="${4:-}" allow_missing="${5:-false}"
+  local -a args=(
+    --silent --show-error --insecure --connect-timeout 15 --max-time 120
+    --output "$response_file" --write-out '%{http_code}' --request "$method"
+    --header "X-N8N-API-KEY: ${PROD_N8N_API_KEY}"
+    --header 'Accept: application/json' --header 'Cache-Control: no-cache'
+  )
+  if [[ -n "$payload" ]]; then
+    args+=( --header 'Content-Type: application/json' --data "$payload" )
+  fi
+
+  if ! PROD_API_STATUS=$(curl "${args[@]}" "${PROD_N8N_API_BASE_URL%/}${path}"); then
+    echo "[ERR] n8n API transport failed: $method $path" >&2
+    return 1
+  fi
+  if [[ "$PROD_API_STATUS" == 200 ]] || [[ "$allow_missing" == true && "$PROD_API_STATUS" == 404 ]]; then
+    return 0
+  fi
+  echo "[ERR] n8n API failed: $method $path (HTTP $PROD_API_STATUS). Check n8n server logs and API-key permissions." >&2
+  return 1
+}
+
+import_workflow_file_to_prod() (
   local local_file="$1"
   local workflow_id="$2"
-  local container_file="/tmp/${workflow_id}.json"
+  [[ "$workflow_id" =~ ^[A-Za-z0-9_-]+$ ]] || { echo '[ERR] Invalid workflow ID'; exit 1; }
+  : "${PROD_N8N_API_BASE_URL:?PROD_N8N_API_BASE_URL is required}"
+  : "${PROD_N8N_API_KEY:?PROD_N8N_API_KEY is required}"
+  case "$PROD_DEPLOY_TARGET" in
+    docker|kubernetes|kubectl) ;;
+    *) echo "[ERR] Unsupported PROD_DEPLOY_TARGET: $PROD_DEPLOY_TARGET"; exit 1 ;;
+  esac
+
+  local deploy_tmp pod_name='' host_file=''
+  deploy_tmp=$(mktemp -d)
+  local container_file="/tmp/n8n-deploy-${workflow_id}-${RANDOM}-${RANDOM}.json"
+  local response_file="${deploy_tmp}/response.json"
+  local staged_file="${deploy_tmp}/workflow.json"
+  local deployment_started=false previous_version=''
+  cleanup_workflow_deploy() {
+    local status=$?
+    trap - EXIT
+    if [[ "$PROD_DEPLOY_TARGET" == docker && -n "$host_file" ]]; then
+      ssh "${PROD_SSH_OPTS[@]}" "$PROD_REMOTE" \
+        "rm -f '$host_file'; docker exec '$PROD_CONTAINER' rm -f '$container_file'" >/dev/null 2>&1 || true
+    elif [[ -n "$pod_name" ]]; then
+      kubectl --kubeconfig="$PROD_KUBECONFIG" exec "$pod_name" -n "$PROD_K8S_NAMESPACE" \
+        ${PROD_K8S_CONTAINER:+-c $PROD_K8S_CONTAINER} -- rm -f "$container_file" >/dev/null 2>&1 || true
+    fi
+    rm -rf "$deploy_tmp"
+    if [[ "$status" -ne 0 && "$deployment_started" == true ]]; then
+      echo "[ERR] Deployment failed for $workflow_id; it may remain unpublished. Fix the reported error and redeploy. No CLI publish fallback was attempted." >&2
+    fi
+    exit "$status"
+  }
+  trap cleanup_workflow_deploy EXIT
+
+  # Import exactly the requested workflow as a fresh draft. DEV publication/history
+  # metadata must not select an old PROD version on a repeated deployment.
+  jq -e --arg id "$workflow_id" '
+    (if type == "array" and length == 1 then .[0] else . end)
+    | if type == "object" and .id == $id and (.nodes | type) == "array" then
+        .active = false | .activeVersionId = null
+        | del(.activeVersion, .versionId, .versionCounter)
+      else error("Expected exactly one workflow with the requested ID and a nodes array") end
+  ' "$local_file" > "$staged_file"
 
   echo "    Import workflow to PROD ${PROD_DEPLOY_TARGET}: $workflow_id"
   
   case "$PROD_DEPLOY_TARGET" in
     kubernetes|kubectl)
       # Ambil nama pod n8n menggunakan kubeconfig lokal Jenkins
-      local pod_name
       pod_name=$(kubectl --kubeconfig="$PROD_KUBECONFIG" get pod -n "$PROD_K8S_NAMESPACE" -l "$PROD_K8S_POD_SELECTOR" -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
       
       [[ -n "$pod_name" ]] || { echo "[ERR] Pod n8n tidak ditemukan dengan selector $PROD_K8S_POD_SELECTOR di namespace $PROD_K8S_NAMESPACE"; exit 1; }
       
       echo "    Copying file directly into pod $pod_name..."
-      kubectl --kubeconfig="$PROD_KUBECONFIG" cp "$local_file" "${PROD_K8S_NAMESPACE}/${pod_name}:${container_file}" ${PROD_K8S_CONTAINER:+-c $PROD_K8S_CONTAINER}
+      kubectl --kubeconfig="$PROD_KUBECONFIG" cp "$staged_file" "${PROD_K8S_NAMESPACE}/${pod_name}:${container_file}" ${PROD_K8S_CONTAINER:+-c $PROD_K8S_CONTAINER}
+      ;;
       
-      # Eksekusi import di dalam pod
-      echo "    Executing n8n import inside pod..."
+    docker)
+      host_file="$container_file"
+      scp "${PROD_SCP_OPTS[@]}" "$staged_file" "$PROD_REMOTE:$host_file"
+      ssh "${PROD_SSH_OPTS[@]}" "$PROD_REMOTE" \
+        "docker cp '$host_file' '$PROD_CONTAINER:$container_file'"
+      ;;
+  esac
+
+  # Unpublish through the running server BEFORE the CLI changes database state.
+  # Only a lookup 404 means a new workflow; auth/server failures abort the deploy.
+  prod_workflow_api GET "/workflows/${workflow_id}" "$response_file" '' true
+  if [[ "$PROD_API_STATUS" == 200 ]]; then
+    jq -e --arg id "$workflow_id" '.id == $id' "$response_file" >/dev/null
+    previous_version=$(jq -er '.versionId | select(type == "string" and length > 0)' "$response_file")
+    echo "    Unpublish existing workflow before import: $workflow_id"
+    deployment_started=true
+    prod_workflow_api POST "/workflows/${workflow_id}/deactivate" "$response_file"
+    prod_workflow_api GET "/workflows/${workflow_id}" "$response_file"
+    jq -e --arg id "$workflow_id" '
+      .id == $id and .active == false and .activeVersionId == null
+    ' "$response_file" >/dev/null || { echo '[ERR] Workflow is still published; import aborted'; exit 1; }
+  else
+    echo "    New workflow; no unpublish required: $workflow_id"
+  fi
+
+  deployment_started=true
+  case "$PROD_DEPLOY_TARGET" in
+    kubernetes|kubectl)
       kubectl --kubeconfig="$PROD_KUBECONFIG" exec "$pod_name" -n "$PROD_K8S_NAMESPACE" ${PROD_K8S_CONTAINER:+-c $PROD_K8S_CONTAINER} -- \
         n8n import:workflow --input "$container_file" --projectId "$PROD_PROJECT_ID"
       ;;
-      
     docker)
-      local host_file="/tmp/${workflow_id}.json"
-      scp "${PROD_SCP_OPTS[@]}" "$local_file" "$PROD_REMOTE:$host_file"
       ssh "${PROD_SSH_OPTS[@]}" "$PROD_REMOTE" \
-        "docker cp '$host_file' '$PROD_CONTAINER:$container_file' && \
-         docker exec -u 0 '$PROD_CONTAINER' n8n import:workflow --input '$container_file' --projectId '$PROD_PROJECT_ID'"
-      ssh "${PROD_SSH_OPTS[@]}" "$PROD_REMOTE" "rm -f '$host_file'"
+        "docker exec -u 0 '$PROD_CONTAINER' n8n import:workflow --input '$container_file' --projectId '$PROD_PROJECT_ID'"
       ;;
   esac
 
-  echo "    Publish workflow via REST API: $workflow_id"
-    
-  # 1. Force deactivate untuk memastikan state memori ter-reset (diabaikan jika sudah inactive)
-  curl -s -k -o /dev/null -X POST "${PROD_N8N_API_BASE_URL}/workflows/${workflow_id}/deactivate" \
-    -H "X-N8N-API-KEY: ${PROD_N8N_API_KEY}" \
-    -H "Accept: application/json"
- 
-  # 2. Activate via REST API agar routing webhook terdaftar murni di active web server memory
-  local api_publish_status
-  api_publish_status=$(curl -s -k -o /dev/null -w "%{http_code}" -X POST "${PROD_N8N_API_BASE_URL}/workflows/${workflow_id}/activate" \
-    -H "X-N8N-API-KEY: ${PROD_N8N_API_KEY}" \
-    -H "Accept: application/json")
- 
-  if [[ "$api_publish_status" -eq 200 ]]; then
-    echo "    [OK] Workflow $workflow_id published and webhooks registered successfully in memory."
-  else
-    echo "    [WARN] API Publish failed (HTTP Status: $api_publish_status). Falling back to CLI execution..."
-    case "$PROD_DEPLOY_TARGET" in
-      kubernetes|kubectl)
-        kubectl --kubeconfig="$PROD_KUBECONFIG" exec "$pod_name" -n "$PROD_K8S_NAMESPACE" ${PROD_K8S_CONTAINER:+-c $PROD_K8S_CONTAINER} -- \
-          n8n publish:workflow --id="$workflow_id"
-        ;;
-      docker)
-        ssh "${PROD_SSH_OPTS[@]}" "$PROD_REMOTE" "docker exec '$PROD_CONTAINER' n8n publish:workflow --id='$workflow_id'"
-        ;;
-    esac
+  # Read the version generated in PROD, never the version exported from DEV.
+  prod_workflow_api GET "/workflows/${workflow_id}" "$response_file"
+  local version_id payload
+  version_id=$(jq -er --arg id "$workflow_id" '
+    select(.id == $id) | .versionId | select(type == "string" and length > 0)
+  ' "$response_file")
+  if [[ "$version_id" == "$previous_version" ]]; then
+    echo "[ERR] Import did not create a new PROD version for $workflow_id; publish aborted"
+    exit 1
   fi
-
-  # Cleanup file json sementara di dalam pod/container
-  echo "    Cleaning up container temporary file..."
-  case "$PROD_DEPLOY_TARGET" in
-    kubernetes|kubectl)
-      kubectl --kubeconfig="$PROD_KUBECONFIG" exec "$pod_name" -n "$PROD_K8S_NAMESPACE" ${PROD_K8S_CONTAINER:+-c $PROD_K8S_CONTAINER} -- rm -f "$container_file" || true
-      ;;
-    docker)
-      ssh "${PROD_SSH_OPTS[@]}" "$PROD_REMOTE" "docker exec '$PROD_CONTAINER' rm -f '$container_file'" || true
-      ;;
-  esac
-}
+  payload=$(jq -nc --arg version "$version_id" '{versionId: $version}')
+  echo "    Publish imported version via REST API: $workflow_id ($version_id)"
+  prod_workflow_api POST "/workflows/${workflow_id}/activate" "$response_file" "$payload"
+  prod_workflow_api GET "/workflows/${workflow_id}" "$response_file"
+  jq -e --arg id "$workflow_id" --arg version "$version_id" '
+    .id == $id and .active == true and .versionId == $version and .activeVersionId == $version
+  ' "$response_file" >/dev/null || {
+    echo "[ERR] Published version verification failed for $workflow_id (expected $version_id)"
+    exit 1
+  }
+  echo "    [OK] Workflow $workflow_id published; activeVersionId matches imported version $version_id."
+)
 
 MAP_FILE="${MAP_DIR}/$(basename "${WF_FILE%.json}").credentials.json"
 
@@ -637,3 +704,4 @@ import_workflow_file_to_prod "$WF_FILE" "$WORKFLOW_ID"
 sync_and_move_to_prod_folder "$WORKFLOW_ID"
 
 echo "[3] Done"
+
