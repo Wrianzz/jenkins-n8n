@@ -81,11 +81,17 @@ elif command == 'curl':
         payload = json.loads(args[args.index('--data') + 1])
         assert payload['versionId'] == wf['versionId'] == 'prod-new-' + wid
         if scenario == 'publish_failure': code = 409
+        elif scenario in ('publish_bad_request', 'publish_html_error'): code = 400
         else:
             wf['active'] = True
             wf['activeVersionId'] = ('prod-old' if scenario == 'stale_publish' else payload['versionId'])
     save()
-    if scenario == 'invalid_json': output.write_text('<html>proxy response</html>')
+    if scenario == 'publish_bad_request' and action == 'activate':
+        output.write_text(json.dumps({'message': 'Cannot publish test-key\ninvalid trigger',
+                                     'code': 400, 'workflow': {'secret': 'do-not-print'}}))
+    elif scenario == 'publish_html_error' and action == 'activate':
+        output.write_text('<html>do-not-print test-key</html>')
+    elif scenario == 'invalid_json': output.write_text('<html>proxy response</html>')
     else: output.write_text(json.dumps(wf if code == 200 else {'message': 'mock error'}))
     print(code, end='')
 else:
@@ -94,6 +100,22 @@ else:
 
 
 class DeployPublicationTests(unittest.TestCase):
+    def test_new_workflow_publish_errors_include_diagnostics(self):
+        for scenario in ('publish_bad_request', 'publish_html_error'):
+            with self.subTest(scenario=scenario):
+                result, events, _ = self.run_deploy(scenario=scenario, existing=False)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn('HTTP 400', result.stderr)
+                self.assertNotIn('test-key', result.stdout + result.stderr)
+                self.assertNotIn('do-not-print', result.stdout + result.stderr)
+                self.assertNotIn('[OK] Workflow', result.stdout)
+                if scenario == 'publish_bad_request':
+                    self.assertIn('Cannot publish [REDACTED]', result.stderr)
+                    self.assertIn('invalid trigger', result.stderr)
+                else:
+                    self.assertIn('no readable JSON error message', result.stderr)
+                self.assertNotIn(['POST', 'mainworkflow01', 'deactivate'], events)
+
     def run_deploy(self, runtime='docker', scenario='', existing=True, sub=False, array=False):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
