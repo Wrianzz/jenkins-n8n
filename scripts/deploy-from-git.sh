@@ -506,7 +506,27 @@ prod_workflow_api() {
   if [[ "$PROD_API_STATUS" == 200 ]] || [[ "$allow_missing" == true && "$PROD_API_STATUS" == 404 ]]; then
     return 0
   fi
-  echo "[ERR] n8n API failed: $method $path (HTTP $PROD_API_STATUS). Check n8n server logs and API-key permissions." >&2
+  echo "[ERR] n8n API failed: $method $path (HTTP $PROD_API_STATUS)." >&2
+  # Keep the server's rejection reason before cleanup removes the response file.
+  # Log only diagnostic fields, redact the API key, and escape control characters.
+  local error_detail
+  if error_detail=$(PROD_API_REDACT_KEY="$PROD_N8N_API_KEY" jq -er '
+    select(type == "object")
+    | {code, message, error}
+    | with_entries(select(.value != null))
+    | if (.error | type) == "object" then
+        .error |= {code, message} | .error |= with_entries(select(.value != null))
+      else . end
+    | with_entries(select((.value | type) == "string" or (.value | type) == "number" or (.value | type) == "object"))
+    | select(length > 0)
+    | tostring
+    | split(env.PROD_API_REDACT_KEY) | join("[REDACTED]")
+    | .[0:2000]
+  ' "$response_file" 2>/dev/null); then
+    printf '[ERR] n8n API response: %s\n' "$error_detail" >&2
+  else
+    echo '[ERR] API response has no readable JSON error message. Check n8n or reverse-proxy logs.' >&2
+  fi
   return 1
 }
 
